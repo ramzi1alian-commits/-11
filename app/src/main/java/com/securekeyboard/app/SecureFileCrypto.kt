@@ -1,0 +1,351 @@
+package com.securekeyboard.app
+
+import android.content.Context
+import android.net.Uri
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.security.KeyFactory
+import java.security.PublicKey
+import java.security.spec.X509EncodedKeySpec
+import java.security.SecureRandom
+import java.util.Arrays
+import javax.crypto.Cipher
+import javax.crypto.CipherOutputStream
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+/**
+ * Contact-bound streaming file encryption.
+ *
+ * SKF2 v2 uses a fresh P-256 ephemeral key pair for every encrypted file.
+ * The sender encrypts with ECDHE(ephemeralPrivate, recipientStaticPublic);
+ * the receiver derives the same key with ECDHE(recipientStaticPrivate,
+ * senderEphemeralPublic). The ephemeral public key is authenticated as part
+ * of the GCM header. SKF2 v1 remains decryptable for migration compatibility.
+ */
+object SecureFileCrypto {
+    private val MAGIC = byteArrayOf('S'.code.toByte(), 'K'.code.toByte(), 'F'.code.toByte(), '2'.code.toByte())
+    private const val VERSION_LEGACY: Byte = 1
+    private const val VERSION_ECDHE: Byte = 2
+    private const val IV_LENGTH = 12
+    private const val EPHEMERAL_MAX = 200
+    private const val LEGACY_HEADER_LENGTH = 4 + 1 + IV_LENGTH + IV_LENGTH + 4
+    private const val ECDHE_FIXED_HEADER = 4 + 1 + 2 + IV_LENGTH + IV_LENGTH + 4
+    private const val MAX_METADATA_CIPHER = 64 * 1024
+    private const val BUFFER_SIZE = 64 * 1024
+    // Hard upper bound for a single encrypted file. This is a policy/DoS
+    // guard, not a cryptographic limit. Raise only with an explicit product
+    // decision and corresponding storage/streaming tests.
+    private const val MAX_FILE_BYTES = 4L * 1024L * 1024L * 1024L
+
+    init {
+        // See CryptoProvider's doc comment / DeviceIdentity's init block.
+        CryptoProvider.ensureRegistered()
+    }
+
+    private fun aesGcmEncrypt(key: ByteArray, iv: ByteArray, aad: ByteArray, plain: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+        cipher.updateAAD(aad)
+        return cipher.doFinal(plain)
+    }
+
+    private fun aesGcmDecrypt(key: ByteArray, iv: ByteArray, aad: ByteArray, cipherBytes: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+        cipher.updateAAD(aad)
+        return cipher.doFinal(cipherBytes)
+    }
+
+    fun encrypt(context: Context, input: Uri, output: Uri, contactPublicKey: PublicKey, passphrase: CharArray, displayName: String?) {
+        require(passphrase.isNotEmpty()) { "passphrase is empty" }
+        val ephemeral = DeviceIdentity.generateEphemeralKeyPair()
+        val key = ContactCrypto.deriveAes256KeyFromEphemeralPrivate(
+            ephemeral.private, contactPublicKey, passphrase, ContactCrypto.Purpose.FILE
+        )
+        val metaIv = ByteArray(IV_LENGTH).also { SecureRandom().nextBytes(it) }
+        val contentIv = ByteArray(IV_LENGTH).also { SecureRandom().nextBytes(it) }
+        var header = ByteArray(0)
+        var metaCipher = ByteArray(0)
+        var ephemeralPub = ephemeral.public.encoded
+        try {
+            require(ephemeralPub.size in 50..EPHEMERAL_MAX) { "invalid ephemeral public key" }
+            val filenameBytes = (displayName ?: "encrypted_file").ifBlank { "encrypted_file" }.toByteArray(Charsets.UTF_8)
+            try {
+                require(filenameBytes.size <= 4096) { "filename too long" }
+                val fixed = ByteBuffer.allocate(ECDHE_FIXED_HEADER)
+                    .put(MAGIC).put(VERSION_ECDHE).putShort(ephemeralPub.size.toShort())
+                    .put(metaIv).put(contentIv).putInt(0).array()
+                header = MAGIC + byteArrayOf(VERSION_ECDHE) +
+                    ByteBuffer.allocate(2).putShort(ephemeralPub.size.toShort()).array() +
+                    ephemeralPub + metaIv + contentIv + ByteArray(4)
+                metaCipher = aesGcmEncrypt(key, metaIv, header.copyOf(header.size - 4), filenameBytes)
+                require(metaCipher.size <= MAX_METADATA_CIPHER)
+                ByteBuffer.wrap(header, header.size - 4, 4).putInt(metaCipher.size)
+                Arrays.fill(fixed, 0)
+            } finally { Arrays.fill(filenameBytes, 0) }
+
+            context.contentResolver.openInputStream(input).use { rawIn ->
+                require(rawIn != null) { "cannot open input" }
+                context.contentResolver.openOutputStream(output).use { rawOut ->
+                    require(rawOut != null) { "cannot open output" }
+                    BufferedInputStream(rawIn, BUFFER_SIZE).use { inputStream ->
+                        BufferedOutputStream(rawOut, BUFFER_SIZE).use { outputStream ->
+                            outputStream.write(header)
+                            outputStream.write(metaCipher)
+                            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, contentIv))
+                            cipher.updateAAD(header + metaCipher)
+                            CipherOutputStream(outputStream, cipher).use { encryptedOut ->
+                                val buffer = ByteArray(BUFFER_SIZE)
+                                try {
+                                    while (true) {
+                                        val read = inputStream.read(buffer)
+                                        if (read < 0) break
+                                        encryptedOut.write(buffer, 0, read)
+                                    }
+                                } finally { Arrays.fill(buffer, 0) }
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            Arrays.fill(key, 0); Arrays.fill(metaIv, 0); Arrays.fill(contentIv, 0)
+            Arrays.fill(header, 0); Arrays.fill(metaCipher, 0); Arrays.fill(ephemeralPub, 0)
+        }
+    }
+
+    fun decryptToTemp(context: Context, input: Uri, contactPublicKey: PublicKey, passphrase: CharArray): Pair<File, String> {
+        require(passphrase.isNotEmpty()) { "passphrase is empty" }
+        val temp = File.createTempFile("skf_dec_", ".tmp", context.cacheDir)
+        try {
+            // Two-pass authenticated decryption for streaming GCM:
+            // pass 1 consumes the complete ciphertext and verifies the tag
+            // without releasing plaintext; pass 2 writes plaintext only after
+            // authentication has succeeded. This avoids exposing unauthenticated
+            // plaintext produced by Cipher.update().
+            val filename = context.contentResolver.openInputStream(input).use { rawIn ->
+                require(rawIn != null) { "cannot open input" }
+                BufferedInputStream(rawIn, BUFFER_SIZE).use { inputStream ->
+                    val prefix = ByteArray(5)
+                    try {
+                        readFully(inputStream, prefix)
+                        require(prefix.copyOfRange(0, 4).contentEquals(MAGIC)) { "not a SecureKeyboard file" }
+                        when (prefix[4]) {
+                            VERSION_LEGACY -> verifyLegacy(context, inputStream, prefix, contactPublicKey, passphrase)
+                            VERSION_ECDHE -> verifyEcdhe(context, inputStream, prefix, passphrase)
+                            else -> throw IllegalArgumentException("unsupported file version")
+                        }
+                    } finally { Arrays.fill(prefix, 0) }
+                }
+            }
+
+            // Re-open the Uri for the second pass. Only authenticated content
+            // reaches the private cache file.
+            context.contentResolver.openInputStream(input).use { rawIn ->
+                require(rawIn != null) { "cannot open input" }
+                BufferedInputStream(rawIn, BUFFER_SIZE).use { inputStream ->
+                    val prefix = ByteArray(5)
+                    try {
+                        readFully(inputStream, prefix)
+                        when (prefix[4]) {
+                            VERSION_LEGACY -> decryptLegacy(context, inputStream, prefix, contactPublicKey, passphrase, temp)
+                            VERSION_ECDHE -> decryptEcdhe(context, inputStream, prefix, passphrase, temp)
+                            else -> throw IllegalArgumentException("unsupported file version")
+                        }
+                    } finally { Arrays.fill(prefix, 0) }
+                }
+            }
+            return temp to filename
+        } catch (e: Exception) {
+            SecureMemory.secureDelete(temp)
+            throw e
+        }
+    }
+
+    /**
+     * Reads and parses the ECDHE (SKF2 v2) header, in the SAME byte order
+     * that encrypt() actually writes it:
+     *   ephLen(2) -> ephemeralPub(ephLen) -> metaIv(12) -> contentIv(12) -> metaLen(4)
+     *
+     * A prior version of this parser read a fixed ECDHE_FIXED_HEADER-5 byte
+     * block immediately after ephLen, on the mistaken assumption that the
+     * variable-length ephemeral public key came AFTER metaIv/contentIv/
+     * metaLen instead of before them. That misalignment caused every field
+     * read after ephLen (the ephemeral key bytes, metaIv, contentIv, and
+     * metaLen) to be read from the wrong stream offset, corrupting or
+     * failing every v2 decrypt. Do not reorder these reads without also
+     * updating encrypt()'s write order above.
+     */
+    private class EcdheHeader(
+        val header: ByteArray,
+        val ephemeralBytes: ByteArray,
+        val metaIv: ByteArray,
+        val contentIv: ByteArray,
+        val metaLen: Int
+    )
+
+    private fun readEcdheHeader(input: java.io.InputStream, prefix: ByteArray): EcdheHeader {
+        val ephLenBytes = ByteArray(2)
+        readFully(input, ephLenBytes)
+        val ephLen = ByteBuffer.wrap(ephLenBytes).short.toInt() and 0xffff
+        require(ephLen in 50..EPHEMERAL_MAX) { "invalid ephemeral key" }
+        val ephemeralBytes = ByteArray(ephLen)
+        readFully(input, ephemeralBytes)
+        val tail = ByteArray(IV_LENGTH * 2 + 4)
+        readFully(input, tail)
+        val metaLen = ByteBuffer.wrap(tail, tail.size - 4, 4).int
+        require(metaLen in 16..MAX_METADATA_CIPHER) { "invalid metadata" }
+        val metaIv = tail.copyOfRange(0, IV_LENGTH)
+        val contentIv = tail.copyOfRange(IV_LENGTH, IV_LENGTH * 2)
+        val header = prefix + ephLenBytes + ephemeralBytes + tail
+        return EcdheHeader(header, ephemeralBytes, metaIv, contentIv, metaLen)
+    }
+
+    private fun verifyEcdhe(context: Context, input: java.io.InputStream, prefix: ByteArray, passphrase: CharArray): String {
+        val parsed = readEcdheHeader(input, prefix)
+        val metaCipher = ByteArray(parsed.metaLen)
+        var key = ByteArray(0)
+        try {
+            readFully(input, metaCipher)
+            val ephemeralPublic = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(parsed.ephemeralBytes))
+            key = ContactCrypto.deriveAes256KeyFromEphemeralPublic(context, ephemeralPublic, passphrase, ContactCrypto.Purpose.FILE)
+            val filenameBytes = aesGcmDecrypt(key, parsed.metaIv, parsed.header.copyOf(parsed.header.size - 4), metaCipher)
+            val filename = try { String(filenameBytes, Charsets.UTF_8) } finally { Arrays.fill(filenameBytes, 0) }
+            verifyContent(input, key, parsed.contentIv, parsed.header, metaCipher)
+            return filename
+        } finally {
+            Arrays.fill(key, 0); Arrays.fill(parsed.ephemeralBytes, 0)
+            Arrays.fill(parsed.metaIv, 0); Arrays.fill(parsed.contentIv, 0)
+            Arrays.fill(metaCipher, 0); Arrays.fill(parsed.header, 0)
+        }
+    }
+
+    private fun decryptEcdhe(context: Context, input: java.io.InputStream, prefix: ByteArray, passphrase: CharArray, temp: File): Pair<File, String> {
+        val parsed = readEcdheHeader(input, prefix)
+        val metaCipher = ByteArray(parsed.metaLen)
+        var key = ByteArray(0)
+        try {
+            readFully(input, metaCipher)
+            val ephemeralPublic = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(parsed.ephemeralBytes))
+            key = ContactCrypto.deriveAes256KeyFromEphemeralPublic(context, ephemeralPublic, passphrase, ContactCrypto.Purpose.FILE)
+            val filenameBytes = aesGcmDecrypt(key, parsed.metaIv, parsed.header.copyOf(parsed.header.size - 4), metaCipher)
+            val filename = try { String(filenameBytes, Charsets.UTF_8) } finally { Arrays.fill(filenameBytes, 0) }
+            decryptContent(input, temp, key, parsed.contentIv, parsed.header, metaCipher)
+            return temp to filename
+        } finally {
+            Arrays.fill(key, 0); Arrays.fill(parsed.ephemeralBytes, 0)
+            Arrays.fill(parsed.metaIv, 0); Arrays.fill(parsed.contentIv, 0)
+            Arrays.fill(metaCipher, 0); Arrays.fill(parsed.header, 0)
+        }
+    }
+
+    private fun verifyLegacy(context: Context, input: java.io.InputStream, prefix: ByteArray, contactPublicKey: PublicKey, passphrase: CharArray): String {
+        val rest = ByteArray(LEGACY_HEADER_LENGTH - 5)
+        val header = prefix + rest
+        val metaIv = ByteArray(IV_LENGTH)
+        val contentIv = ByteArray(IV_LENGTH)
+        var key = ByteArray(0)
+        try {
+            readFully(input, rest)
+            System.arraycopy(header, 5, metaIv, 0, IV_LENGTH)
+            System.arraycopy(header, 5 + IV_LENGTH, contentIv, 0, IV_LENGTH)
+            val metaLen = ByteBuffer.wrap(header, LEGACY_HEADER_LENGTH - 4, 4).int
+            require(metaLen in 16..MAX_METADATA_CIPHER) { "invalid metadata" }
+            val metaCipher = ByteArray(metaLen)
+            try {
+                readFully(input, metaCipher)
+                key = ContactCrypto.deriveAes256Key(context, contactPublicKey, passphrase, ContactCrypto.Purpose.FILE)
+                val filenameBytes = aesGcmDecrypt(key, metaIv, header.copyOf(LEGACY_HEADER_LENGTH - 4), metaCipher)
+                val filename = try { String(filenameBytes, Charsets.UTF_8) } finally { Arrays.fill(filenameBytes, 0) }
+                verifyContent(input, key, contentIv, header, metaCipher)
+                return filename
+            } finally { Arrays.fill(metaCipher, 0) }
+        } finally {
+            Arrays.fill(key, 0); Arrays.fill(rest, 0); Arrays.fill(header, 0); Arrays.fill(metaIv, 0); Arrays.fill(contentIv, 0)
+        }
+    }
+
+    private fun verifyContent(input: java.io.InputStream, key: ByteArray, contentIv: ByteArray, header: ByteArray, metaCipher: ByteArray) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, contentIv))
+        cipher.updateAAD(header + metaCipher)
+        val buffer = ByteArray(BUFFER_SIZE)
+        var total = 0L
+        try {
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                total += n.toLong()
+                require(total <= MAX_FILE_BYTES + 16) { "encrypted file too large" }
+                val plain = cipher.update(buffer, 0, n)
+                if (plain != null) Arrays.fill(plain, 0)
+            }
+            val finalPlain = cipher.doFinal()
+            Arrays.fill(finalPlain, 0)
+        } finally { Arrays.fill(buffer, 0) }
+    }
+
+    private fun decryptContent(input: java.io.InputStream, temp: File, key: ByteArray, contentIv: ByteArray, header: ByteArray, metaCipher: ByteArray) {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, contentIv))
+        cipher.updateAAD(header + metaCipher)
+        FileOutputStream(temp).use { rawOut ->
+            BufferedOutputStream(rawOut, BUFFER_SIZE).use { out ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var total = 0L
+                try {
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        total += n.toLong()
+                        require(total <= MAX_FILE_BYTES + 16) { "encrypted file too large" }
+                        val plain = cipher.update(buffer, 0, n)
+                        if (plain != null && plain.isNotEmpty()) {
+                            out.write(plain)
+                            Arrays.fill(plain, 0)
+                        }
+                    }
+                    val finalPlain = cipher.doFinal()
+                    if (finalPlain.isNotEmpty()) {
+                        out.write(finalPlain)
+                        Arrays.fill(finalPlain, 0)
+                    }
+                    out.flush()
+                } finally { Arrays.fill(buffer, 0) }
+            }
+        }
+    }
+
+    private fun decryptLegacy(context: Context, input: java.io.InputStream, prefix: ByteArray, contactPublicKey: PublicKey, passphrase: CharArray, temp: File): Pair<File, String> {
+        val rest = ByteArray(LEGACY_HEADER_LENGTH - 5)
+        val header = prefix + rest
+        val metaIv = ByteArray(IV_LENGTH)
+        val contentIv = ByteArray(IV_LENGTH)
+        val metaCipher: ByteArray
+        var key = ByteArray(0)
+        try {
+            readFully(input, rest)
+            System.arraycopy(header, 5, metaIv, 0, IV_LENGTH)
+            System.arraycopy(header, 5 + IV_LENGTH, contentIv, 0, IV_LENGTH)
+            val metaLen = ByteBuffer.wrap(header, LEGACY_HEADER_LENGTH - 4, 4).int
+            require(metaLen in 16..MAX_METADATA_CIPHER) { "invalid metadata" }
+            metaCipher = ByteArray(metaLen)
+            readFully(input, metaCipher)
+            key = ContactCrypto.deriveAes256Key(context, contactPublicKey, passphrase, ContactCrypto.Purpose.FILE)
+            val filenameBytes = aesGcmDecrypt(key, metaIv, header.copyOf(LEGACY_HEADER_LENGTH - 4), metaCipher)
+            val filename = try { String(filenameBytes, Charsets.UTF_8) } finally { Arrays.fill(filenameBytes, 0) }
+            decryptContent(input, temp, key, contentIv, header, metaCipher)
+            Arrays.fill(metaCipher, 0)
+            return temp to filename
+        } finally {
+            Arrays.fill(key, 0); Arrays.fill(rest, 0); Arrays.fill(header, 0); Arrays.fill(metaIv, 0); Arrays.fill(contentIv, 0)
+        }
+    }
+
+    private fun readFully(input: java.io.InputStream, buffer: ByteArray){var offset=0;while(offset<buffer.size){val n=input.read(buffer,offset,buffer.size-offset);require(n>=0){"truncated encrypted file"};offset+=n}}
+}

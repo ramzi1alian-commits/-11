@@ -1,0 +1,26 @@
+<resources>
+    <!-- Premium light palette: cool neutral surfaces + restrained security gold. -->
+    <color name="navy_950">#F4F7FB</color>
+    <color name="navy_900">#FFFFFF</color>
+    <color name="navy_800">#EEF2F7</color>
+    <color name="navy_700">#CBD5E1</color>
+    <color name="slate_400">#64748B</color>
+    <color name="slate_200">#0F172A</color>
+    <color name="white">#0F172A</color>
+
+    <color name="accent_cyan">#0891B2</color>
+    <color name="accent_cyan_dark">#0E7490</color>
+    <color name="danger_red">#DC2626</color>
+    <color name="accent_teal">#0F9F6E</color>
+    <color name="accent_gold">#A66A16</color>
+    <color name="accent_purple">#7C3AED</color>
+    <color name="accent_secure_green">#38D85A</color>
+
+    <color name="text_on_accent">#111827</color>
+    <color name="navy_50_light">#F8FAFC</color>
+    <color name="white_card">#FFFFFF</color>
+
+    <color name="colorPrimary">@color/navy_900</color>
+    <color name="colorPrimaryDark">@color/navy_950</color>
+    <color name="colorAccent">@color/accent_cyan</color>
+</resources>

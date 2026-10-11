@@ -1,0 +1,18 @@
+// Supply-chain hardening: keep dependency repositories centralized and reject
+// repository declarations added by individual modules.
+dependencyResolutionManagement {
+    // Keep repository ownership centralized.  FAIL_ON_PROJECT_REPOS prevents
+    // modules from silently introducing arbitrary repositories.  Do not use
+    // per-group content filters here: Gradle resolves transitive dependencies
+    // as well as direct dependencies, and an incomplete filter causes valid
+    // CI builds to fail when an upstream library adds a new transitive group.
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+
+rootProject.name = "SecureKeyboard"
+include ':app'

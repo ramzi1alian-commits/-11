@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    RECOLORED to match the app's warm-gold in-app palette (accent_gold
+    #A67924 in values/colors.xml) instead of the old, unrelated
+    electric-blue branding - shape and composition are unchanged, only
+    the shield gradient, outline, and keyhole colors moved to bronze/
+    gold + cream so the launcher icon actually looks like this app.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M54,22 L80,32 L80,55 C80,71 69,83 54,88 C39,83 28,71 28,55 L28,32 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:angle="90"
+                android:startColor="#D9A440"
+                android:endColor="#6B4A16" />
+        </aapt:attr>
+    </path>
+
+    <path
+        android:pathData="M54,22 L80,32 L80,55 C80,71 69,83 54,88 C39,83 28,71 28,55 L28,32 Z"
+        android:fillColor="#00000000"
+        android:strokeColor="#FBF0D9"
+        android:strokeWidth="1.4" />
+
+    <path
+        android:pathData="M48,52 L48,43 C48,38.5 50.7,35.5 54,35.5 C57.3,35.5 60,38.5 60,43 L60,52"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.4" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M45,52 h18 v16 h-18 z" />
+
+    <path
+        android:fillColor="#4A3410"
+        android:pathData="M54,57 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="#4A3410"
+        android:pathData="M52.7,59 h2.6 v4 h-2.6 z" />
+</vector>
