@@ -1,64 +1,100 @@
 package com.securekeyboard.app
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.view.View
 import android.view.WindowManager
+import android.webkit.MimeTypeMap
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
 import java.io.FileInputStream
 import java.util.Arrays
 
 /**
  * Secure receive path for .skf files opened from WhatsApp, Files, or the
  * Android Sharesheet. The encrypted file is never copied into the keyboard's
- * clipboard and is only decrypted after the user selects a paired contact
- * and has an active session passphrase.
+ * clipboard.
+ *
+ * V43 flow: when a session passphrase is active the file is decrypted automatically
+ * (every paired contact is tried unless one was picked), images are previewed inside
+ * this FLAG_SECURE screen, and the user can open the file in a viewer or save a copy.
+ * The decrypted file lives in the app cache only: purged after [OPEN_FILE_MAX_AGE_MS].
  */
 class SecureFileReceiveActivity : Activity() {
     companion object {
         private const val PICK_OUTPUT_TREE = 6201
+        private const val OPEN_DIR = "secure_open"
+        private const val OPEN_FILE_MAX_AGE_MS = 10 * 60 * 1000L
+        private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
     }
 
     private lateinit var contactSpinner: Spinner
     private lateinit var statusText: TextView
     private lateinit var selectedText: TextView
+    private lateinit var previewImage: ImageView
+    private lateinit var decryptBtn: Button
+    private lateinit var openBtn: Button
+    private lateinit var saveBtn: Button
     private val names = mutableListOf<String>()
     private var inputUri: android.net.Uri? = null
     private var pendingFilename = "decrypted_file"
     private var pendingTempPath: String? = null
+    private var openedExternally = false
+    @Volatile private var decrypting = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_secure_file_receive)
+        purgeOldOpenFiles()
 
         contactSpinner = findViewById(R.id.receive_contact_spinner)
         statusText = findViewById(R.id.receive_status)
         selectedText = findViewById(R.id.receive_selected_text)
+        previewImage = findViewById(R.id.receive_preview)
+        decryptBtn = findViewById(R.id.receive_decrypt_btn)
+        openBtn = findViewById(R.id.receive_open_btn)
+        saveBtn = findViewById(R.id.receive_save_btn)
 
-        findViewById<Button>(R.id.receive_decrypt_btn).setOnClickListener { beginDecrypt() }
+        decryptBtn.setOnClickListener { beginDecrypt() }
+        openBtn.setOnClickListener { openDecrypted() }
+        saveBtn.setOnClickListener { launchOutputPicker() }
         findViewById<Button>(R.id.receive_close_btn).setOnClickListener { finish() }
 
         inputUri = SecurityIntentValidator.encryptedFileUri(intent)
         if (inputUri == null) {
             statusText.text = "رابط أو ملف غير صالح"
-            findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = false
+            decryptBtn.isEnabled = false
         }
         selectedText.text = queryDisplayName(inputUri) ?: "ملف مشفر"
         refreshContacts()
         refreshSessionStatus()
+
+        // Seamless path: nothing to tap when everything needed is already available.
+        if (inputUri != null && names.isNotEmpty() && SessionKeyStore.isActive()) {
+            beginDecrypt()
+        }
     }
 
+    /** Position 0 is "automatic"; positions 1..n are the paired contacts. */
     private fun refreshContacts() {
         names.clear()
         names.addAll(ContactStore.listPairedContactNames(this))
-        val labels = if (names.isEmpty()) listOf("لا توجد جهات اتصال آمنة") else names.toList()
+        val labels = if (names.isEmpty()) {
+            listOf("لا توجد جهات اتصال آمنة")
+        } else {
+            listOf("تلقائي — تجربة كل جهات الاتصال") + names
+        }
         contactSpinner.adapter = ArrayAdapter(this, R.layout.spinner_item_light_text, labels).also {
             it.setDropDownViewResource(R.layout.spinner_dropdown_item_light_text)
         }
@@ -68,71 +104,153 @@ class SecureFileReceiveActivity : Activity() {
         statusText.text = when {
             inputUri == null -> "لم يتم العثور على ملف مشفر"
             names.isEmpty() -> "أضف جهة اتصال آمنة أولًا"
-            !SessionKeyStore.isActive() -> "فعّل مفتاح الجلسة أولًا من شاشة التشفير"
+            !SessionKeyStore.isActive() -> "فعّل مفتاح الجلسة أولًا من شاشة التشفير ثم اضغط فك التشفير"
             else -> "مفتاح الجلسة نشط — متبقي ${SessionKeyStore.remainingMinutes()} دقيقة تقريبًا"
         }
     }
 
     private fun beginDecrypt() {
+        if (decrypting) return
         val uri = inputUri ?: run {
             Toast.makeText(this, "لم يتم العثور على الملف المشفر", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (names.isEmpty()) {
+            Toast.makeText(this, "أضف جهة اتصال آمنة أولًا", Toast.LENGTH_LONG).show()
             return
         }
         if (!SessionKeyStore.isActive()) {
             Toast.makeText(this, R.string.crypto_panel_no_session, Toast.LENGTH_LONG).show()
             return
         }
-        val contactName = names.getOrNull(contactSpinner.selectedItemPosition) ?: run {
-            Toast.makeText(this, "اختر جهة اتصال آمنة", Toast.LENGTH_LONG).show()
-            return
-        }
-        val contactB64 = ContactStore.getPairedContact(this, contactName) ?: run {
-            Toast.makeText(this, "جهة الاتصال غير موجودة", Toast.LENGTH_LONG).show()
-            return
-        }
         val pass = SessionKeyStore.get() ?: run {
             Toast.makeText(this, R.string.crypto_panel_no_session, Toast.LENGTH_LONG).show()
             return
         }
+        val position = contactSpinner.selectedItemPosition
+        val candidates: List<String> = if (position <= 0) {
+            names.toList()
+        } else {
+            listOfNotNull(names.getOrNull(position - 1))
+        }
 
+        decrypting = true
         statusText.text = "جارٍ التحقق وفك تشفير الملف…"
-        findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = false
+        decryptBtn.isEnabled = false
         Thread {
-            var temp: java.io.File? = null
+            var opened: File? = null
+            var displayName = "decrypted_file"
             try {
-                val publicKey = DeviceIdentity.parseContactPublicKey(contactB64)
-                val result = SecureFileCrypto.decryptToTemp(this, uri, publicKey, pass)
-                temp = result.first
-                pendingFilename = sanitizeFilename(result.second)
-                pendingTempPath = temp.absolutePath
-                runOnUiThread {
-                    statusText.text = "✓ تم التحقق من الملف. اختر مكان حفظ النسخة الأصلية بعد فك التشفير."
-                    launchOutputPicker()
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    statusText.text = "فشل فك التشفير — المفتاح غير صحيح أو الملف تالف."
-                    Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
-                    findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = true
+                for (name in candidates) {
+                    try {
+                        val contactB64 = ContactStore.getPairedContact(this, name) ?: continue
+                        val publicKey = DeviceIdentity.parseContactPublicKey(contactB64)
+                        val result = SecureFileCrypto.decryptToTemp(this, uri, publicKey, pass)
+                        displayName = sanitizeFilename(result.second)
+                        opened = moveToOpenDir(result.first, displayName)
+                        break
+                    } catch (_: Exception) {
+                        // Wrong contact, wrong passphrase or damaged file: try the next candidate.
+                    }
                 }
             } finally {
                 Arrays.fill(pass, '\u0000')
             }
+            val decrypted = opened
+            if (decrypted == null) {
+                runOnUiThread {
+                    decrypting = false
+                    statusText.text = "فشل فك التشفير — المفتاح أو جهة الاتصال غير صحيحة، أو الملف تالف."
+                    Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
+                    decryptBtn.isEnabled = true
+                }
+            } else {
+                val bitmap = decodePreview(decrypted, displayName)
+                runOnUiThread {
+                    decrypting = false
+                    pendingFilename = displayName
+                    pendingTempPath = decrypted.absolutePath
+                    selectedText.text = displayName
+                    statusText.text = "✓ تم فك التشفير والتحقق من الملف"
+                    decryptBtn.visibility = View.GONE
+                    openBtn.visibility = View.VISIBLE
+                    saveBtn.visibility = View.VISIBLE
+                    if (bitmap != null) {
+                        previewImage.setImageBitmap(bitmap)
+                        previewImage.visibility = View.VISIBLE
+                    }
+                }
+            }
         }.start()
     }
 
+    /** Gives the decrypted file a viewer-friendly name inside the short-lived cache folder. */
+    private fun moveToOpenDir(temp: File, safeName: String): File {
+        val dir = File(cacheDir, OPEN_DIR)
+        dir.mkdirs()
+        val ext = safeName.substringAfterLast('.', "").lowercase().filter { it.isLetterOrDigit() }.take(8)
+        val dest = File(dir, "f_" + System.nanoTime() + (if (ext.isNotEmpty()) ".$ext" else ""))
+        if (!temp.renameTo(dest)) {
+            temp.inputStream().use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
+            SecureMemory.secureDelete(temp)
+        }
+        return dest
+    }
+
+    private fun decodePreview(file: File, name: String): android.graphics.Bitmap? {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        if (ext !in IMAGE_EXTENSIONS) return null
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
+            BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun openDecrypted() {
+        val file = pendingTempPath?.let { File(it) }
+        if (file == null || !file.exists()) {
+            Toast.makeText(this, "انتهت جلسة الملف المؤقتة، أعد فك التشفير", Toast.LENGTH_LONG).show()
+            return
+        }
+        val ext = file.name.substringAfterLast('.', "").lowercase()
+        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            openedExternally = true
+            startActivity(view)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, "لا يوجد تطبيق يفتح هذا النوع، استخدم حفظ نسخة", Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {
+            Toast.makeText(this, "تعذر فتح الملف", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun launchOutputPicker() {
+        val file = pendingTempPath?.let { File(it) }
+        if (file == null || !file.exists()) {
+            Toast.makeText(this, "انتهت جلسة الملف المؤقتة، أعد فك التشفير", Toast.LENGTH_LONG).show()
+            return
+        }
         val tree = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         }
         try {
+            @Suppress("DEPRECATION")
             startActivityForResult(tree, PICK_OUTPUT_TREE)
         } catch (e: Exception) {
-            cleanupTemp()
             statusText.text = "تعذر فتح مدير الملفات"
-            findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = true
         }
     }
 
@@ -141,9 +259,7 @@ class SecureFileReceiveActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != PICK_OUTPUT_TREE) return
         if (resultCode != Activity.RESULT_OK || data?.data == null) {
-            cleanupTemp()
             statusText.text = "تم إلغاء الحفظ"
-            findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = true
             return
         }
         val treeUri = data.data!!
@@ -154,10 +270,9 @@ class SecureFileReceiveActivity : Activity() {
             )
         } catch (_: Exception) { }
 
-        val tempFile = pendingTempPath?.let { java.io.File(it) }
+        val tempFile = pendingTempPath?.let { File(it) }
         if (tempFile == null || !tempFile.exists()) {
             statusText.text = "انتهت جلسة الملف المؤقتة، أعد المحاولة"
-            findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = true
             return
         }
 
@@ -184,29 +299,38 @@ class SecureFileReceiveActivity : Activity() {
                     }
                 }
                 runOnUiThread {
-                    statusText.text = "✓ تم فك التشفير وحفظ الملف بنجاح"
+                    statusText.text = "✓ تم حفظ الملف بنجاح"
                     Toast.makeText(this, "تم حفظ الملف: $pendingFilename", Toast.LENGTH_LONG).show()
-                    findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = true
                 }
             } catch (e: Exception) {
                 runOnUiThread {
                     statusText.text = "تعذر حفظ الملف في المجلد المحدد"
                     Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
-                    findViewById<Button>(R.id.receive_decrypt_btn).isEnabled = true
                 }
-            } finally {
-                cleanupTemp()
             }
         }.start()
     }
 
     private fun cleanupTemp() {
-        pendingTempPath?.let { SecureMemory.secureDelete(java.io.File(it)) }
+        pendingTempPath?.let { SecureMemory.secureDelete(File(it)) }
         pendingTempPath = null
     }
 
+    /** Removes decrypted files left in the cache by earlier sessions. */
+    private fun purgeOldOpenFiles() {
+        try {
+            val dir = File(cacheDir, OPEN_DIR)
+            val now = System.currentTimeMillis()
+            dir.listFiles()?.forEach { f ->
+                if (now - f.lastModified() > OPEN_FILE_MAX_AGE_MS) SecureMemory.secureDelete(f)
+            }
+        } catch (_: Exception) { }
+    }
+
     override fun onDestroy() {
-        cleanupTemp()
+        previewImage.setImageDrawable(null)
+        // If a viewer app was launched, leave the file for it; the age-based purge removes it later.
+        if (!openedExternally) cleanupTemp()
         super.onDestroy()
     }
 

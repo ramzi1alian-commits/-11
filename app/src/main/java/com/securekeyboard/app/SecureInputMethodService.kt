@@ -559,7 +559,7 @@ class SecureInputMethodService : InputMethodService() {
             rows = listOf(
                 "ض ص ث ق ف غ ع ه خ ح ج",
                 "ش س ي ب ل ا ت ن م ك ة",
-                "؛ ظ ط ذ د ز ر و ؤ"
+                "؛ ظ ط ذ د ز ر و ؤ ء"
             )
         } else {
             rows = if (englishShiftOn) ENGLISH_ROWS_UPPER else ENGLISH_ROWS_LOWER
@@ -1053,7 +1053,7 @@ class SecureInputMethodService : InputMethodService() {
             listOf(
                 "ض ص ث ق ف غ ع ه خ ح ج",
                 "ش س ي ب ل ا ت ن م ك ة",
-                "؛ ظ ط ذ د ز ر و ؤ"
+                "؛ ظ ط ذ د ز ر و ؤ ء"
             )
         } else {
             if (englishShiftOn) ENGLISH_ROWS_UPPER else ENGLISH_ROWS_LOWER
@@ -2065,18 +2065,31 @@ class SecureInputMethodService : InputMethodService() {
         val widthSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         val heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         content.measure(widthSpec, heightSpec)
-        val loc = IntArray(2)
-        anchor.getLocationOnScreen(loc)
         val popupWidth = content.measuredWidth
         val popupHeight = content.measuredHeight
-        val screenWidth = resources.displayMetrics.widthPixels
-        val xOff = (loc[0] + anchor.width / 2 - popupWidth / 2).coerceIn(0, (screenWidth - popupWidth).coerceAtLeast(0))
-        val yAbove = loc[1] - popupHeight - dpToPx(6f)
-        val yBelow = loc[1] + anchor.height + dpToPx(6f)
-        val frame = android.graphics.Rect()
-        anchor.getWindowVisibleDisplayFrame(frame)
-        val yOff = if (yAbove >= frame.top) yAbove else yBelow
-        popup.showAtLocation(anchor, Gravity.NO_GRAVITY, xOff, yOff)
+        val gap = dpToPx(6f)
+
+        // FIX (bubble not appearing): the old code used getLocationOnScreen()
+        // + showAtLocation(NO_GRAVITY). A PopupWindow attached to an IME
+        // window is positioned relative to THAT window (which sits at the
+        // bottom of the screen), not relative to the screen, so the keyboard's
+        // own offset was added twice and the bubble landed below the visible
+        // screen. Now: window-relative coordinates + showAsDropDown(), which
+        // is positioned relative to the anchor key itself.
+        val locInWindow = IntArray(2)
+        anchor.getLocationInWindow(locInWindow)
+        val windowWidth = anchor.rootView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val desiredLeft = (locInWindow[0] + anchor.width / 2 - popupWidth / 2)
+            .coerceIn(0, (windowWidth - popupWidth).coerceAtLeast(0))
+        val xOff = desiredLeft - locInWindow[0]
+        val fitsAbove = (locInWindow[1] - popupHeight - gap) >= 0
+        val yOff = if (fitsAbove) -(anchor.height + popupHeight + gap) else gap
+        try {
+            popup.showAsDropDown(anchor, xOff, yOff)
+        } catch (_: Exception) {
+            // Never let a failed popup crash the keyboard; the key then
+            // behaves like a normal tap (plain letter).
+        }
         return Pair(popup, content)
     }
 

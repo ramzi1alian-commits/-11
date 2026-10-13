@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="secure_outbox" path="secure_outbox/" />
+    <!-- Decrypted files the user explicitly chooses to open in a viewer app. Short-lived: purged after 10 minutes. -->
+    <cache-path name="secure_open" path="secure_open/" />
 </paths>
