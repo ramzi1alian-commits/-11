@@ -48,8 +48,8 @@ check_absent 'Log.v(' "No verbose Log.v calls"
 
 
 exported_count=$(grep -c 'android:exported="true"' "$MANIFEST" || true)
-if [[ "$exported_count" == "3" ]] && grep -q 'android:name=".SettingsActivity"' "$MANIFEST" && grep -q 'android:name=".SecureFileReceiveActivity"' "$MANIFEST" && grep -q 'android:name=".SecureInputMethodService"' "$MANIFEST"; then
-  echo "PASS: exported component allowlist (3 intentional entry points)"
+if [[ "$exported_count" == "4" ]] && grep -q 'android:name=".SettingsActivity"' "$MANIFEST" && grep -q 'android:name=".SecureFileReceiveActivity"' "$MANIFEST" && grep -q 'android:name=".SecureInputMethodService"' "$MANIFEST" && grep -q 'android:name=".AutoDecryptService"' "$MANIFEST" && grep -q 'android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"' "$MANIFEST"; then
+  echo "PASS: exported component allowlist (4 intentional entry points; accessibility service is system-bound)"
 else
   echo "FAIL: exported component allowlist changed unexpectedly"
   fail=1

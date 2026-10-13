@@ -167,4 +167,8 @@
     <string name="err_replayed">هذه الرسالة فُكّ تشفيرها سابقاً على هذا الجهاز، ولا يمكن فتحها مرة ثانية (حماية من إعادة الإرسال).</string>
     <string name="crypto_panel_replayed_toast">هذه الرسالة فُتحت سابقاً ولا يمكن فكها مرة ثانية</string>
     <string name="identity_regenerated_notice">تعذّرت قراءة هويتك السابقة فأُنشئت هوية جديدة. أعد إقران جهات الاتصال.</string>
+    <string name="auto_decrypt_service_label">فك التشفير التلقائي</string>
+    <string name="auto_decrypt_service_description">يقرأ الرسائل المشفّرة الظاهرة في تطبيقات المحادثة المدعومة فقط، ويعرض نصها الأصلي فوقها دون أن تضغط على شيء. يعمل أثناء جلسة عبارة المرور النشطة. لا يرسل أي شيء خارج الجهاز، فالتطبيق بلا صلاحية الإنترنت.</string>
+    <string name="auto_decrypt_expired">⏳ انتهت صلاحية هذه الرسالة</string>
+    <string name="auto_decrypt_replayed">هذه الرسالة فُتحت سابقاً ولم يعد نصها محفوظاً</string>
 </resources>

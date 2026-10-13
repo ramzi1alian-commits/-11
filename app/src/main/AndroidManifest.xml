@@ -121,5 +121,22 @@
                 android:resource="@xml/method" />
         </service>
 
+        <!-- Auto-decrypt overlay. Bound only by the system (BIND_ACCESSIBILITY_SERVICE is a
+             system-only permission). The app still has no INTERNET permission, so nothing
+             this service reads can leave the device. Active only in the chat apps listed in
+             AutoDecryptService.SUPPORTED_PACKAGES. -->
+        <service
+            android:name=".AutoDecryptService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true"
+            android:label="@string/auto_decrypt_service_label">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_decrypt_service" />
+        </service>
+
     </application>
 </manifest>

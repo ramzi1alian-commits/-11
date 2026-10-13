@@ -124,7 +124,11 @@ object CryptoEngineV2 {
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
             cipher.updateAAD(header)
             val cipherBytes = cipher.doFinal(plainBytes)
-            return Base64.encodeToString(header + iv + cipherBytes, Base64.NO_WRAP)
+            val encoded = Base64.encodeToString(header + iv + cipherBytes, Base64.NO_WRAP)
+            // You cannot decrypt your own outgoing message (it is encrypted to the recipient),
+            // so remember its plaintext to show it in your own chat bubble. Never fails a send.
+            try { DecryptedMessageCache.put(context, encoded, textChars) } catch (_: Exception) { }
+            return encoded
         } finally {
             Arrays.fill(passphraseKey, 0); Arrays.fill(dhEphemeral, 0); Arrays.fill(dhStatic, 0)
             Arrays.fill(senderPoint, 0); Arrays.fill(recipientPoint, 0); Arrays.fill(key, 0)
@@ -148,7 +152,7 @@ object CryptoEngineV2 {
         val combined = Base64.decode(encoded, Base64.NO_WRAP)
         try {
             require(combined.size > LEGACY_HEADER_LENGTH + IV_LENGTH) { "ciphertext too short" }
-            return when (combined[0]) {
+            val plain = when (combined[0]) {
                 FORMAT_VERSION -> decryptV4(context, combined, passphraseChars, senderPublicKey)
                 V3_FORMAT_VERSION -> {
                     require(ALLOW_LEGACY_V3_DECRYPT) { "legacy v3 messages are disabled" }
@@ -160,6 +164,9 @@ object CryptoEngineV2 {
                 }
                 else -> throw IllegalArgumentException("unsupported format version")
             }
+            // A v4 message opens only once (replay protection); remember it for re-display.
+            try { DecryptedMessageCache.put(context, encoded, plain) } catch (_: Exception) { }
+            return plain
         } finally {
             Arrays.fill(combined, 0)
         }
