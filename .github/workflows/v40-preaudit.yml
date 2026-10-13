@@ -24,14 +24,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Set up Android SDK (licenses handled manually)
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: false
 
-      - name: Install required Android SDK packages
+      - name: Accept Android SDK licenses and install required packages
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          set +o pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "ANDROID_HOME=${ANDROID_HOME:-unset}"
+          ls "$ANDROID_HOME/platforms" || true
+          ls "$ANDROID_HOME/build-tools" || true
 
       - name: Set up Gradle 8.4
         uses: gradle/actions/setup-gradle@v4
