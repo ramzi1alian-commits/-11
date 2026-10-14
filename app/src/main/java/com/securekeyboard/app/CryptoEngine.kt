@@ -9,6 +9,7 @@ import java.security.SecureRandom
 import java.util.Arrays
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
+import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
@@ -120,6 +121,36 @@ object CryptoEngine {
         return bytes
     }
 
+    // ---- FIPS-compatible mode (format v5) -------------------------------------------------
+    // PBKDF2-HMAC-SHA-256 (NIST SP 800-132) instead of Argon2id. Built on the platform's HMAC
+    // so no third-party KDF is involved and the result does not depend on a provider's
+    // password-encoding quirks (the passphrase is always its UTF-8 bytes).
+    // 600,000 is the current OWASP minimum for PBKDF2-HMAC-SHA256.
+    internal const val PBKDF2_ITERATIONS = 600_000
+
+    fun derivePbkdf2Sha256(passChars: CharArray, salt: ByteArray, iterations: Int): ByteArray {
+        require(iterations > 0) { "invalid PBKDF2 iterations" }
+        val passBytes = charsToUtf8Bytes(passChars)
+        var u = ByteArray(0)
+        try {
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(passBytes, "HmacSHA256"))
+            mac.update(salt)
+            mac.update(byteArrayOf(0, 0, 0, 1)) // block index 1 (one 32-byte block is the whole key)
+            u = mac.doFinal()
+            val t = u.copyOf()
+            for (i in 1 until iterations) {
+                mac.update(u)
+                mac.doFinal(u, 0)
+                for (j in t.indices) t[j] = (t[j].toInt() xor u[j].toInt()).toByte()
+            }
+            return t
+        } finally {
+            Arrays.fill(passBytes, 0)
+            Arrays.fill(u, 0)
+        }
+    }
+
     fun deriveKey(
         passChars: CharArray,
         salt: ByteArray,
@@ -170,44 +201,79 @@ object CryptoEngine {
         }
     }
 
-    private fun buildHeaderV3(hasExpiry: Boolean, expiryEpochSeconds: Long, memoryKb: Int): ByteArray {
-        val buffer = ByteBuffer.allocate(HEADER_LENGTH_V3)
-        buffer.put(FORMAT_VERSION)
-        buffer.put(if (hasExpiry) 1.toByte() else 0.toByte())
-        buffer.putLong(expiryEpochSeconds)
-        buffer.putInt(memoryKb)
-        buffer.put(ARGON_ITERATIONS.toByte())
-        buffer.put(ARGON_PARALLELISM.toByte())
-        return buffer.array()
-    }
-
-    fun encrypt(textChars: CharArray, passChars: CharArray, expirySeconds: Long?): String {
+    /**
+     * New messages use the compact v7 format (see [CompactFormat]):
+     * version | flags | [expiry] | salt(16) | AES-256-GCM ciphertext+tag.
+     * [fipsMode] selects PBKDF2-HMAC-SHA-256 instead of Argon2id as the passphrase KDF.
+     */
+    fun encrypt(textChars: CharArray, passChars: CharArray, expirySeconds: Long?, fipsMode: Boolean = false): String {
         require(textChars.isNotEmpty()) { "plaintext is empty" }
         require(passChars.isNotEmpty()) { "passphrase is empty" }
-        require(expirySeconds == null || expirySeconds in 0L..(365L * 24L * 60L * 60L)) {
+        require(expirySeconds == null || expirySeconds in 1L..(365L * 24L * 60L * 60L)) {
             "expiry is out of range"
         }
         val salt = ByteArray(SALT_LENGTH).also { SecureRandom().nextBytes(it) }
-        val iv = ByteArray(IV_LENGTH).also { SecureRandom().nextBytes(it) }
-        val memoryKb = chooseArgonMemoryKb()
-        val keyBytes = deriveKey(passChars, salt, memoryKb = memoryKb)
+        val profile = CompactFormat.profileForNewMessage(fipsMode)
+        val secret = CompactFormat.deriveSecret(profile, passChars, salt)
+        var key = ByteArray(0)
+        var iv = ByteArray(0)
         val plainBytes = charsToUtf8Bytes(textChars)
         try {
             val hasExpiry = expirySeconds != null
             val expiryEpoch = if (hasExpiry) (System.currentTimeMillis() / 1000L) + expirySeconds!! else 0L
-            val header = buildHeaderV3(hasExpiry, expiryEpoch, memoryKb)
-
-            val key = SecretKeySpec(keyBytes, "AES")
+            val header = CompactFormat.buildHeader(CompactFormat.VERSION_PASSPHRASE, hasExpiry, expiryEpoch, profile)
+            val material = CompactFormat.derivePassphraseKeyAndIv(secret, header + salt)
+            key = material.first
+            iv = material.second
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
             cipher.updateAAD(header)
+            cipher.updateAAD(salt)
             val cipherBytes = cipher.doFinal(plainBytes)
-
-            val combined = header + salt + iv + cipherBytes
-            return Base64.encodeToString(combined, Base64.NO_WRAP)
+            return Base64.encodeToString(header + salt + cipherBytes, Base64.NO_WRAP)
         } finally {
-            Arrays.fill(keyBytes, 0)
-            Arrays.fill(plainBytes, 0)
+            Arrays.fill(secret, 0); Arrays.fill(key, 0); Arrays.fill(iv, 0); Arrays.fill(plainBytes, 0)
+        }
+    }
+
+    private fun decryptCompact(combined: ByteArray, passChars: CharArray): CharArray {
+        require(combined.size >= 2) { "ciphertext too short" }
+        val flags = CompactFormat.parseFlags(combined[1])
+        val headerLength = CompactFormat.headerLength(flags)
+        require(combined.size > headerLength + CompactFormat.SALT_LENGTH + CompactFormat.TAG_BYTES) {
+            "ciphertext too short"
+        }
+        val header = combined.copyOfRange(0, headerLength)
+        if (flags.hasExpiry) {
+            val expiry = CompactFormat.readExpiry(ByteBuffer.wrap(header, 2, 4))
+            // Checked before the expensive KDF so an expired message fails fast.
+            if (System.currentTimeMillis() / 1000L >= expiry) throw ExpiredMessageException()
+        }
+        val salt = combined.copyOfRange(headerLength, headerLength + CompactFormat.SALT_LENGTH)
+        val cipherBytes = combined.copyOfRange(headerLength + CompactFormat.SALT_LENGTH, combined.size)
+        val secret = CompactFormat.deriveSecret(flags.profile, passChars, salt)
+        var key = ByteArray(0)
+        var iv = ByteArray(0)
+        try {
+            val material = CompactFormat.derivePassphraseKeyAndIv(secret, header + salt)
+            key = material.first
+            iv = material.second
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            cipher.updateAAD(header)
+            cipher.updateAAD(salt)
+            val plainBytes = cipher.doFinal(cipherBytes)
+            try {
+                val charBuffer = Charsets.UTF_8.decode(ByteBuffer.wrap(plainBytes))
+                val chars = CharArray(charBuffer.remaining())
+                charBuffer.get(chars)
+                return chars
+            } finally {
+                Arrays.fill(plainBytes, 0)
+            }
+        } finally {
+            Arrays.fill(secret, 0); Arrays.fill(key, 0); Arrays.fill(iv, 0)
+            Arrays.fill(header, 0); Arrays.fill(salt, 0); Arrays.fill(cipherBytes, 0)
         }
     }
 
@@ -224,6 +290,14 @@ object CryptoEngine {
         }
         val combined = Base64.decode(encoded, Base64.NO_WRAP)
         require(combined.isNotEmpty()) { "ciphertext too short" }
+
+        if (combined[0] == CompactFormat.VERSION_PASSPHRASE) {
+            try {
+                return decryptCompact(combined, passChars)
+            } finally {
+                Arrays.fill(combined, 0)
+            }
+        }
 
         val headerLength = when (combined[0]) {
             VERSION_V2 -> HEADER_LENGTH_V2
@@ -308,12 +382,13 @@ object CryptoEngine {
      */
     fun looksLikeCiphertext(text: String): Boolean {
         val trimmed = text.trim()
-        if (trimmed.length < 40) return false
+        if (trimmed.length < 44) return false
         val decoded = try {
             Base64.decode(trimmed, Base64.NO_WRAP)
         } catch (_: Exception) {
             return false
         }
-        return decoded.size > HEADER_LENGTH_V2 + SALT_LENGTH + IV_LENGTH
+        // Smallest real message is the compact v7 format: 2 + 16 (salt) + 16 (tag) + 1 byte of text.
+        return decoded.size >= 35
     }
 }

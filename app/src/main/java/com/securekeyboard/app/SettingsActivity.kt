@@ -120,6 +120,10 @@ class SettingsActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.phrases_cleared_toast, Toast.LENGTH_SHORT).show()
         }
 
+        val fipsSwitch = findViewById<SwitchMaterial>(R.id.switchFips)
+        fipsSwitch.isChecked = Prefs.fipsMode(this)
+        fipsSwitch.setOnCheckedChangeListener { _, checked -> Prefs.setFipsMode(this, checked) }
+
         val autocorrectSwitch = findViewById<SwitchMaterial>(R.id.switchAutocorrect)
         autocorrectSwitch.isChecked = Prefs.autocorrectEnabled(this)
         autocorrectSwitch.setOnCheckedChangeListener { _, checked ->

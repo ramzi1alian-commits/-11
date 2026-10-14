@@ -57,10 +57,10 @@ class AutoDecryptService : AccessibilityService() {
             "com.viber.voip", "com.discord",
             "com.google.android.apps.messaging", "com.samsung.android.messaging", "com.android.mms"
         )
-        private val TOKEN = Regex("^(?:Ag|Aw|BA)[A-Za-z0-9+/]{78,}={0,2}$")
-        private val TOKEN_IN_TEXT = Regex("(?:Ag|Aw|BA)[A-Za-z0-9+/]{78,}={0,2}")
-        // Smallest real message (v3, 1-char text) is 84 Base64 chars; 100 hid every short message.
-        private const val MIN_LEN = 80
+        private val TOKEN = Regex("^(?:Ag|Aw|BA|Bg|Bw)[A-Za-z0-9+/]{42,}={0,2}$")
+        private val TOKEN_IN_TEXT = Regex("(?:Ag|Aw|BA|Bg|Bw)[A-Za-z0-9+/]{42,}={0,2}")
+        // Smallest real message is the compact v7 format with 1 char of text: 36 bytes = 48 Base64 chars.
+        private const val MIN_LEN = 44
         private const val MAX_LEN = 24_000
         private const val MAX_NODES = 1500
         private const val MAX_DEPTH = 40
@@ -89,7 +89,8 @@ class AutoDecryptService : AccessibilityService() {
     private val memo = HashMap<String, String>()          // id -> plaintext ready to draw
     private val pending = HashSet<String>()               // id -> decryption in flight
     private val retryAfter = HashMap<String, Long>()      // id -> do not retry before
-    private val notices = HashMap<String, String>()       // id -> "expired" / "already opened"
+    private val notices = HashMap<String, String>()       // id -> "expired" / "already opened" / "bad text"
+    private val failures = HashMap<String, String>()      // id -> "wrong key" (retried later)
 
     private var scanQueued = false
     private var scanRunning = false
@@ -98,6 +99,9 @@ class AutoDecryptService : AccessibilityService() {
     // Total vertical scroll (px) reported by scroll events so far; used to correct scan results
     // that were taken before the latest scroll.
     private var shiftY = 0
+    private var originX = 0
+    private var overlayAddedAt = 0L
+    private var originY = 0
 
     private val scanRunnable = Runnable {
         scanQueued = false
@@ -110,8 +114,10 @@ class AutoDecryptService : AccessibilityService() {
     // screen event).
     private val expiryRunnable = Runnable {
         if (!SessionKeyStore.isActive()) {
+            // Drop all plaintext now; the next scan shows "choose a key first" cards instead.
             wipeState()
             clearOverlay()
+            scheduleRefresh()
         } else if ((overlay?.childCount ?: 0) > 0) {
             scheduleExpiryCheck()
         }
@@ -129,6 +135,7 @@ class AutoDecryptService : AccessibilityService() {
         pending.clear()
         retryAfter.clear()
         notices.clear()
+        failures.clear()
     }
 
     override fun onServiceConnected() {
@@ -213,8 +220,13 @@ class AutoDecryptService : AccessibilityService() {
     /** Runs on the scanner thread. */
     private fun scan(): ScanResult {
         // The active key's fingerprint decides what may be shown and what state is valid.
-        val pass = SessionKeyStore.get() ?: return ScanResult(null, emptyList())
-        val fp = try { DecryptedMessageCache.fingerprintOf(pass) } finally { SecureMemory.wipe(pass) }
+        val pass = SessionKeyStore.get()
+        // null = no active key; messages are still located so a "choose a key first" card can be shown.
+        val fp = if (pass == null) null else try {
+            DecryptedMessageCache.fingerprintOf(pass)
+        } finally {
+            SecureMemory.wipe(pass)
+        }
         val root = try { rootInActiveWindow } catch (_: Exception) { null }
             ?: return ScanResult(fp, emptyList())
         try {
@@ -224,7 +236,7 @@ class AutoDecryptService : AccessibilityService() {
             collect(root, 0, IntArray(1), found)
             val items = ArrayList<ScanItem>(found.size)
             for ((token, rect) in found) {
-                items.add(ScanItem(token, DecryptedMessageCache.keyOf(token) + fp, rect))
+                items.add(ScanItem(token, DecryptedMessageCache.keyOf(token) + (fp ?: ""), rect))
             }
             return ScanResult(fp, items)
         } finally {
@@ -234,10 +246,15 @@ class AutoDecryptService : AccessibilityService() {
 
     private fun onScanResult(result: ScanResult?, shiftAtStart: Int) {
         val fp = result?.fp
-        if (result == null || fp == null) {
-            // No active key (expired or cleared): show nothing and drop all plaintext.
+        if (result == null) {
             wipeState()
             clearOverlay()
+            return
+        }
+        if (fp == null) {
+            // No active key (expired, cleared or never chosen): drop all plaintext and tell the user.
+            wipeState()
+            render(result.items, null, shiftY - shiftAtStart)
             return
         }
         if (fp != currentFp) {
@@ -288,21 +305,33 @@ class AutoDecryptService : AccessibilityService() {
         return m.value.takeIf { it.length <= MAX_LEN }
     }
 
-    private fun render(items: List<ScanItem>, fp: String, scrolledSinceScan: Int) {
+    private fun render(items: List<ScanItem>, fp: String?, scrolledSinceScan: Int) {
         val toShow = ArrayList<Pair<Rect, String>>()
         for (item in items) {
-            val text = memo[item.id] ?: notices[item.id]
-            if (text != null) {
-                toShow.add(Pair(item.rect, text))
-            } else {
-                requestDecrypt(item, fp)
+            if (fp == null) {
+                toShow.add(Pair(item.rect, getString(R.string.auto_decrypt_no_key)))
+                continue
             }
+            val done = memo[item.id] ?: notices[item.id]
+            // Messages that failed are re-tried later (rate-limited), without hiding the status card.
+            if (done == null) requestDecrypt(item, fp)
+            // Always show SOMETHING: result, status, or "decrypting..." while Argon2 is running.
+            val text = done ?: failures[item.id]
+                ?: (if (pending.contains(item.id)) getString(R.string.auto_decrypt_working) else null)
+            if (text != null) toShow.add(Pair(item.rect, text))
         }
         if (toShow.isEmpty()) {
             clearOverlay()
             return
         }
         val container = ensureOverlay() ?: return
+        // Positions from accessibility are SCREEN coordinates, but the overlay window is not
+        // guaranteed to start at the screen's top-left (cutout / system bars / Android 14
+        // insets). Same trap as the keyboard's key popup: subtract the window's own origin.
+        val origin = IntArray(2)
+        try { container.getLocationOnScreen(origin) } catch (_: Exception) { }
+        originX = origin[0]
+        originY = origin[1]
         // Reuse the existing card views (no remove/add churn) so scrolling stays smooth.
         while (container.childCount > toShow.size) container.removeViewAt(container.childCount - 1)
         for ((i, item) in toShow.withIndex()) {
@@ -318,7 +347,7 @@ class AutoDecryptService : AccessibilityService() {
                 bindCard(existing, item.first, item.second, scrolledSinceScan)
             }
         }
-        scheduleExpiryCheck()
+        if (fp != null) scheduleExpiryCheck()
     }
 
     private fun requestDecrypt(item: ScanItem, fp: String) {
@@ -378,9 +407,12 @@ class AutoDecryptService : AccessibilityService() {
                     // Only results for the key that is still active are kept.
                     if (currentFp == fp) {
                         when {
-                            finalText != null -> memo[id] = finalText
+                            finalText != null -> { memo[id] = finalText; failures.remove(id) }
                             finalNotice != null -> notices[id] = finalNotice
-                            finalFailed -> retryAfter[id] = SystemClock.elapsedRealtime() + FAILURE_RETRY_MS
+                            finalFailed -> {
+                                failures[id] = getString(R.string.auto_decrypt_wrong_key)
+                                retryAfter[id] = SystemClock.elapsedRealtime() + FAILURE_RETRY_MS
+                            }
                         }
                     }
                     scheduleRefresh()
@@ -396,11 +428,11 @@ class AutoDecryptService : AccessibilityService() {
         val raw = try {
             Base64.decode(token, Base64.NO_WRAP)
         } catch (_: Exception) {
-            return Pair(null, null)
+            return Pair(null, getString(R.string.auto_decrypt_bad_text))
         }
         val version = if (raw.isNotEmpty()) raw[0].toInt() else -1
         SecureMemory.wipe(raw)
-        if (version !in 2..4) return Pair(null, null)
+        if (version !in 2..7) return Pair(null, getString(R.string.auto_decrypt_bad_text))
 
         var expired = false
         var replayed = false
@@ -489,12 +521,19 @@ class AutoDecryptService : AccessibilityService() {
         }
         tv.tag = CardState(text, style, rect.width(), rect.height())
         // Position through translation: moving a card never triggers a layout pass.
-        tv.translationX = rect.left.toFloat()
-        tv.translationY = (rect.top - scrolledSinceScan).toFloat()
+        tv.translationX = (rect.left - originX).toFloat()
+        tv.translationY = (rect.top - originY - scrolledSinceScan).toFloat()
     }
 
     private fun ensureOverlay(): FrameLayout? {
-        overlay?.let { return it }
+        overlay?.let {
+            // A freshly added window attaches on its first frame, so only judge older ones.
+            if (it.isAttachedToWindow || SystemClock.uptimeMillis() - overlayAddedAt < 1000L) return it
+            // The window was dropped by the system (service rebind, display change): rebuild it,
+            // otherwise cards would be added to a dead window and never appear.
+            overlay = null
+            try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeViewImmediate(it) } catch (_: Exception) { }
+        }
         return try {
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
             val lp = WindowManager.LayoutParams(
@@ -516,6 +555,7 @@ class AutoDecryptService : AccessibilityService() {
             container.layoutDirection = View.LAYOUT_DIRECTION_LTR
             wm.addView(container, lp)
             overlay = container
+            overlayAddedAt = SystemClock.uptimeMillis()
             container
         } catch (_: Exception) {
             null

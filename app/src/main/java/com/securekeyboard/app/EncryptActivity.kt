@@ -133,7 +133,7 @@ class EncryptActivity : AppCompatActivity() {
             rootWarningText.visibility = View.VISIBLE
         }
         if (!initialPosture.trustedForSensitiveOps) {
-            rootWarningText.text = getString(R.string.security_environment_warning)
+            rootWarningText.text = environmentWarningText(initialPosture)
             rootWarningText.visibility = View.VISIBLE
         }
 
@@ -206,12 +206,12 @@ class EncryptActivity : AppCompatActivity() {
                     val resultB64: String
                     if (selectedContact == null) {
                         val expirySeconds = selectedExpirySeconds()
-                        resultB64 = CryptoEngine.encrypt(textChars, passChars, expirySeconds)
+                        resultB64 = CryptoEngine.encrypt(textChars, passChars, expirySeconds, fipsMode = Prefs.fipsMode(this))
                     } else {
                         val recipientKeyB64 = ContactStore.getPairedContact(this, selectedContact)
                             ?: throw IllegalStateException("paired contact missing")
                         val recipientPublicKey = DeviceIdentity.parseContactPublicKey(recipientKeyB64)
-                        resultB64 = CryptoEngineV2.encrypt(this, textChars, passChars, recipientPublicKey, selectedExpirySeconds())
+                        resultB64 = CryptoEngineV2.encrypt(this, textChars, passChars, recipientPublicKey, selectedExpirySeconds(), fipsMode = Prefs.fipsMode(this))
                     }
                     showResult(resultB64)
                     // The plaintext no longer needs to stay in the input
@@ -411,8 +411,23 @@ class EncryptActivity : AppCompatActivity() {
     private fun allowSensitiveOperation(): Boolean {
         val posture = SecurityRuntime.assess(this)
         if (posture.trustedForSensitiveOps) return true
-        showError(getString(R.string.security_environment_warning))
+        showError(environmentWarningText(posture))
         return false
+    }
+
+    /** The generic warning PLUS the exact checks that failed, so the cause is never a mystery. */
+    private fun environmentWarningText(p: SecurityRuntime.Posture): String {
+        val reasons = ArrayList<String>()
+        if (p.debuggable) reasons.add(getString(R.string.reason_debuggable))
+        if (p.debuggerAttached) reasons.add(getString(R.string.reason_debugger))
+        if (p.tracerAttached) reasons.add(getString(R.string.reason_tracer))
+        if (p.suspiciousInstrumentation) reasons.add(getString(R.string.reason_instrumentation))
+        if (RootCheck.hasTestKeys()) reasons.add(getString(R.string.reason_test_keys))
+        if (RootCheck.hasSuBinary()) reasons.add(getString(R.string.reason_su))
+        if (p.signaturePinned && !p.signatureMatches) reasons.add(getString(R.string.reason_signature))
+        val base = getString(R.string.security_environment_warning)
+        return if (reasons.isEmpty()) base
+        else base + "\n" + getString(R.string.reason_prefix) + "\n• " + reasons.joinToString("\n• ")
     }
 
     private fun editableToCharArray(editable: Editable?): CharArray {
@@ -680,9 +695,10 @@ object RootCheck {
         "/su/bin/su"
     )
 
-    fun looksRooted(): Boolean {
-        val tags = Build.TAGS
-        if (tags != null && tags.contains("test-keys")) return true
-        return suspiciousPaths.any { File(it).exists() }
-    }
+    /** System image signed with public "test-keys": common on custom ROMs and some cheap devices. */
+    fun hasTestKeys(): Boolean = Build.TAGS?.contains("test-keys") == true
+
+    fun hasSuBinary(): Boolean = suspiciousPaths.any { File(it).exists() }
+
+    fun looksRooted(): Boolean = hasTestKeys() || hasSuBinary()
 }

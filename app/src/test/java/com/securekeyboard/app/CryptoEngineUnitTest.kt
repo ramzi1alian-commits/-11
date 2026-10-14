@@ -100,7 +100,7 @@ class CryptoEngineUnitTest {
         // independently of detection.
         val encoded = CryptoEngine.encrypt("expiry integrity".toCharArray(), freshPass(), 3600L)
         val raw = Base64.decode(encoded, Base64.NO_WRAP)
-        raw[2] = (raw[2].toInt() xor 0x01).toByte() // inside the 8-byte expiry field
+        raw[2] = (raw[2].toInt() xor 0x01).toByte() // inside the 4-byte expiry field
         val tampered = Base64.encodeToString(raw, Base64.NO_WRAP)
         try {
             CryptoEngine.decrypt(tampered, freshPass())
@@ -193,7 +193,7 @@ class CryptoEngineUnitTest {
     fun `non-expiring message has no expiry flag and decrypts any time`() {
         val encoded = CryptoEngine.encrypt("no expiry".toCharArray(), freshPass(), null)
         val raw = Base64.decode(encoded, Base64.NO_WRAP)
-        assertTrue("expiry flag byte should be 0 when no expiry was requested", raw[1].toInt() == 0)
+        assertTrue("expiry flag bit should be 0 when no expiry was requested", (raw[1].toInt() and 1) == 0)
         // Should decrypt fine regardless of how much time passes.
         val decoded = CryptoEngine.decrypt(encoded, freshPass())
         try {
@@ -204,31 +204,31 @@ class CryptoEngineUnitTest {
     }
 
     @Test
-    fun `crafted huge Argon2 memory cost in header is rejected before key derivation`() {
-        // Regression guard for the resource-exhaustion bounds check: an
-        // attacker-controlled header must not be able to force this device
-        // to allocate an arbitrary amount of memory for Argon2id before any
-        // authentication has happened.
+    fun `reserved flag bits and unknown KDF profiles are rejected before key derivation`() {
+        // Compact format: the KDF cost is chosen from a FIXED profile table (flags bits 1-3), never from
+        // a number in the message, so an attacker cannot request an arbitrary memory/time cost.
         val encoded = CryptoEngine.encrypt("bounded".toCharArray(), freshPass(), null)
-        val raw = Base64.decode(encoded, Base64.NO_WRAP)
-        // v3 header layout: [0]=version [1]=hasExpiry [2..9]=expiry [10..13]=memoryKb (big-endian int)
-        raw[10] = 0x7f
-        raw[11] = 0x7f
-        raw[12] = 0x7f
-        raw[13] = 0x7f
-        val tampered = Base64.encodeToString(raw, Base64.NO_WRAP)
-        val start = System.nanoTime()
-        try {
-            CryptoEngine.decrypt(tampered, freshPass())
-            fail("out-of-bounds Argon2 memory cost must be rejected")
-        } catch (_: IllegalArgumentException) {
-            // expected - and expected to fail FAST, before any Argon2 allocation
-            val elapsedMs = (System.nanoTime() - start) / 1_000_000
-            assertTrue(
-                "bounds check must reject before spending time on Argon2id (took ${elapsedMs}ms)",
-                elapsedMs < 500
-            )
+        for (badFlags in intArrayOf(0x7f, 0x0a /* profile 5 */, 0x0e /* profile 7 */, 0x10 /* reserved bit */)) {
+            val raw = Base64.decode(encoded, Base64.NO_WRAP)
+            raw[1] = badFlags.toByte()
+            val tampered = Base64.encodeToString(raw, Base64.NO_WRAP)
+            val start = System.nanoTime()
+            try {
+                CryptoEngine.decrypt(tampered, freshPass())
+                fail("flags 0x${Integer.toHexString(badFlags)} must be rejected")
+            } catch (_: IllegalArgumentException) {
+                val elapsedMs = (System.nanoTime() - start) / 1_000_000
+                assertTrue("must reject before the KDF runs (took ${elapsedMs}ms)", elapsedMs < 500)
+            }
         }
+    }
+
+    @Test
+    fun `compact message overhead is small`() {
+        val encoded = CryptoEngine.encrypt("hi".toCharArray(), freshPass(), null)
+        val raw = Base64.decode(encoded, Base64.NO_WRAP)
+        // version + flags + salt(16) + tag(16) + 2 bytes of text
+        assertTrue("unexpected size ${raw.size}", raw.size == 2 + 16 + 16 + 2)
     }
 
     @Test

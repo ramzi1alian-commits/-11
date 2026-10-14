@@ -60,11 +60,8 @@ class CryptoEngineAdversarialTest {
     fun malformed_argon2_parameters_are_rejected_before_derivation() {
         val encoded = CryptoEngine.encrypt("bounded".toCharArray(), passphrase.copyOf(), null)
         val raw = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
-        // v3 header: version(0), expiry flag(1), expiry(2..9), memory(10..13)
-        raw[10] = 0x7f
-        raw[11] = 0x7f
-        raw[12] = 0x7f
-        raw[13] = 0x7f
+        // compact header: version(0), flags(1): reserved bits set -> must be refused before any KDF work
+        raw[1] = 0x7f
         val tampered = android.util.Base64.encodeToString(raw, android.util.Base64.NO_WRAP)
         assertDecryptFails(tampered)
         Arrays.fill(raw, 0)
@@ -123,11 +120,9 @@ class ContactCryptoEcdheAdversarialTest {
         try {
             val encoded = CryptoEngineV2.encrypt(context, "tamper".toCharArray(), pass.copyOf(), publicKey)
             val raw = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
-            // v4 layout: version(1) flag(1) expiry(8) argonMem(4) argonIter(1) argonPar(1)
-            // salt(16) ephLen(2) -> ephLen at 32..33, ephemeral key starts at 34.
-            val ephLen = ((raw[32].toInt() and 0xff) shl 8) or (raw[33].toInt() and 0xff)
-            assertTrue(ephLen in 50..200)
-            raw[34] = (raw[34].toInt() xor 0x01).toByte()
+            // v6 layout (no expiry): version(0) flags(1) salt(2..17) compressed ephemeral key(18..50)
+            assertTrue(raw[18].toInt() == 2 || raw[18].toInt() == 3)
+            raw[19] = (raw[19].toInt() xor 0x01).toByte()
             val tampered = android.util.Base64.encodeToString(raw, android.util.Base64.NO_WRAP)
             try {
                 CryptoEngineV2.decrypt(context, tampered, pass.copyOf(), publicKey)

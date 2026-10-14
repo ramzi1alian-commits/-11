@@ -217,6 +217,42 @@ object DeviceIdentity {
         return out
     }
 
+    /** 33-byte SEC1 compressed form (02/03 || X) of a canonical 65-byte point. */
+    fun compressPoint(uncompressed: ByteArray): ByteArray {
+        require(uncompressed.size == 65 && uncompressed[0].toInt() == 4) { "invalid point" }
+        val out = ByteArray(33)
+        out[0] = if ((uncompressed[64].toInt() and 1) == 0) 2 else 3
+        System.arraycopy(uncompressed, 1, out, 1, 32)
+        return out
+    }
+
+    /**
+     * Rebuilds a P-256 public key from its 33-byte compressed form and validates it
+     * (y^2 must equal x^3 + ax + b; the result also passes [requireValidP256PublicKey]).
+     */
+    fun publicKeyFromCompressed(compressed: ByteArray): PublicKey {
+        require(compressed.size == 33 && (compressed[0].toInt() == 2 || compressed[0].toInt() == 3)) {
+            "invalid compressed point"
+        }
+        val params = p256Params
+        val p = (params.curve.field as ECFieldFp).p
+        val x = BigInteger(1, compressed.copyOfRange(1, 33))
+        require(x < p) { "invalid public point" }
+        val rhs = x.multiply(x).multiply(x)
+            .add(params.curve.a.multiply(x))
+            .add(params.curve.b)
+            .mod(p)
+        // p = 3 (mod 4) for P-256, so a square root is rhs^((p+1)/4).
+        var y = rhs.modPow(p.add(BigInteger.ONE).shiftRight(2), p)
+        require(y.multiply(y).mod(p) == rhs) { "point is not on the curve" }
+        if (y.testBit(0) != (compressed[0].toInt() == 3)) y = p.subtract(y)
+        val key = KeyFactory.getInstance("EC").generatePublic(
+            java.security.spec.ECPublicKeySpec(ECPoint(x, y), params)
+        )
+        requireValidP256PublicKey(key)
+        return key
+    }
+
     private fun fixed32(v: BigInteger): ByteArray {
         val raw = v.toByteArray()
         var start = 0

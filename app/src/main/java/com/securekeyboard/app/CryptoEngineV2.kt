@@ -15,7 +15,7 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Contact-bound message encryption.
  *
- * FORMAT v4 (all new messages)
+ * FORMAT v4 (older; still readable)
  * ----------------------------
  * header (authenticated as AAD, and hashed into the key schedule):
  *   version(1)=4 | expiryFlag(1) | expiryEpochSec(8) |
@@ -39,7 +39,15 @@ import javax.crypto.spec.SecretKeySpec
  * long-term identity key. That needs recipient-published rotating prekeys, which
  * a serverless QR-pairing app cannot distribute. See docs/security/V41_CHANGES.md.
  *
- * Older formats: v3 (ephemeral-static, no sender auth) is still readable;
+ * FORMAT v6 (all NEW messages) is a compact successor of v4 - see [CompactFormat]:
+ *   version(1)=6 | flags(1) | [expiry u32] | salt(16) | ephemeral public key (33, compressed) | ct+tag(16)
+ * Same security design as v4 (two ECDH secrets + memory-hard passphrase factor + HKDF over the whole
+ * header, AES-256-GCM with the header as AAD) in about 67 bytes of overhead instead of 153. The IV is
+ * derived with the key, which is unique per message. The optional FIPS-compatible mode selects
+ * PBKDF2-HMAC-SHA-256 (profile 4) as the passphrase KDF; it is algorithm compatibility only, NOT a
+ * FIPS 140-3 validation.
+ *
+ * v4 messages remain readable. Older formats: v3 (ephemeral-static, no sender auth) is still readable;
  * v2 (static-static) is refused unless [ALLOW_LEGACY_V2_DECRYPT] is enabled.
  */
 object CryptoEngineV2 {
@@ -53,7 +61,9 @@ object CryptoEngineV2 {
     // version, expiryFlag, expiry, argonMem, argonIter, argonPar, salt, ephLen
     private const val V4_FIXED_LENGTH = 1 + 1 + 8 + 4 + 1 + 1 + SALT_LENGTH + 2
 
-    const val FORMAT_VERSION: Byte = 4
+    /** Version written for new messages (compact format). */
+    const val FORMAT_VERSION: Byte = CompactFormat.VERSION_CONTACT
+    private const val V4_FORMAT_VERSION: Byte = 4
     private const val V3_FORMAT_VERSION: Byte = 3
     private const val LEGACY_FORMAT_VERSION: Byte = 2
 
@@ -71,7 +81,8 @@ object CryptoEngineV2 {
         textChars: CharArray,
         passphraseChars: CharArray,
         recipientPublicKey: PublicKey,
-        expirySeconds: Long? = null
+        expirySeconds: Long? = null,
+        fipsMode: Boolean = false
     ): String {
         require(passphraseChars.isNotEmpty()) { "passphrase is empty" }
         if (expirySeconds != null) require(expirySeconds > 0) { "invalid expiry" }
@@ -79,12 +90,10 @@ object CryptoEngineV2 {
 
         val random = SecureRandom()
         val ephemeral = DeviceIdentity.generateEphemeralKeyPair()
-        val ephemeralBytes = ephemeral.public.encoded
-        val salt = ByteArray(SALT_LENGTH).also { random.nextBytes(it) }
-        val iv = ByteArray(IV_LENGTH).also { random.nextBytes(it) }
-        val memoryKb = CryptoEngine.chooseArgonMemoryKb()
-        val iterations = CryptoEngine.ARGON_ITERATIONS
-        val parallelism = CryptoEngine.ARGON_PARALLELISM
+        val ephemeralPoint = DeviceIdentity.publicPoint(ephemeral.public)
+        val ephemeralCompressed = DeviceIdentity.compressPoint(ephemeralPoint)
+        val salt = ByteArray(CompactFormat.SALT_LENGTH).also { random.nextBytes(it) }
+        val profile = CompactFormat.profileForNewMessage(fipsMode)
 
         var passphraseKey = ByteArray(0)
         var dhEphemeral = ByteArray(0)
@@ -92,39 +101,32 @@ object CryptoEngineV2 {
         var senderPoint = ByteArray(0)
         var recipientPoint = ByteArray(0)
         var key = ByteArray(0)
+        var iv = ByteArray(0)
         var plainBytes = ByteArray(0)
         var header = ByteArray(0)
         try {
-            require(ephemeralBytes.size in 50..MAX_EPHEMERAL_KEY_BYTES) { "invalid ephemeral public key" }
             val hasExpiry = expirySeconds != null
             val expiryEpoch = if (hasExpiry) (System.currentTimeMillis() / 1000L) + expirySeconds!! else 0L
-            header = ByteBuffer.allocate(V4_FIXED_LENGTH + ephemeralBytes.size)
-                .put(FORMAT_VERSION)
-                .put(if (hasExpiry) 1.toByte() else 0.toByte())
-                .putLong(expiryEpoch)
-                .putInt(memoryKb)
-                .put(iterations.toByte())
-                .put(parallelism.toByte())
-                .put(salt)
-                .putShort(ephemeralBytes.size.toShort())
-                .put(ephemeralBytes)
-                .array()
+            header = CompactFormat.buildHeader(CompactFormat.VERSION_CONTACT, hasExpiry, expiryEpoch, profile) +
+                salt + ephemeralCompressed
 
-            passphraseKey = CryptoEngine.deriveKey(passphraseChars, salt, memoryKb, iterations, parallelism)
+            passphraseKey = CompactFormat.deriveSecret(profile, passphraseChars, salt)
             dhEphemeral = DeviceIdentity.computeSharedSecretWithPrivateKey(ephemeral.private, recipientPublicKey)
             dhStatic = DeviceIdentity.computeSharedSecret(context, recipientPublicKey)
             senderPoint = DeviceIdentity.myPublicPoint(context)
             recipientPoint = DeviceIdentity.publicPoint(recipientPublicKey)
-            key = ContactCrypto.deriveMessageKeyV4(
+            val material = CompactFormat.deriveContactKeyAndIv(
                 dhEphemeral, dhStatic, passphraseKey, senderPoint, recipientPoint, header
             )
+            key = material.first
+            iv = material.second
 
             plainBytes = CryptoEngine.charsToUtf8Bytes(textChars)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
             cipher.updateAAD(header)
             val cipherBytes = cipher.doFinal(plainBytes)
-            val encoded = Base64.encodeToString(header + iv + cipherBytes, Base64.NO_WRAP)
+            val encoded = Base64.encodeToString(header + cipherBytes, Base64.NO_WRAP)
             // You cannot decrypt your own outgoing message (it is encrypted to the recipient),
             // so remember its plaintext to show it in your own chat bubble. Never fails a send.
             try { DecryptedMessageCache.put(context, encoded, textChars, DecryptedMessageCache.fingerprintOf(passphraseChars)) } catch (_: Exception) { }
@@ -132,8 +134,8 @@ object CryptoEngineV2 {
         } finally {
             Arrays.fill(passphraseKey, 0); Arrays.fill(dhEphemeral, 0); Arrays.fill(dhStatic, 0)
             Arrays.fill(senderPoint, 0); Arrays.fill(recipientPoint, 0); Arrays.fill(key, 0)
-            Arrays.fill(plainBytes, 0); Arrays.fill(header, 0)
-            Arrays.fill(iv, 0); Arrays.fill(salt, 0); Arrays.fill(ephemeralBytes, 0)
+            Arrays.fill(iv, 0); Arrays.fill(plainBytes, 0); Arrays.fill(header, 0)
+            Arrays.fill(salt, 0); Arrays.fill(ephemeralPoint, 0); Arrays.fill(ephemeralCompressed, 0)
         }
     }
 
@@ -153,7 +155,8 @@ object CryptoEngineV2 {
         try {
             require(combined.size > LEGACY_HEADER_LENGTH + IV_LENGTH) { "ciphertext too short" }
             val plain = when (combined[0]) {
-                FORMAT_VERSION -> decryptV4(context, combined, passphraseChars, senderPublicKey)
+                CompactFormat.VERSION_CONTACT -> decryptV6(context, combined, passphraseChars, senderPublicKey)
+                V4_FORMAT_VERSION -> decryptV4(context, combined, passphraseChars, senderPublicKey)
                 V3_FORMAT_VERSION -> {
                     require(ALLOW_LEGACY_V3_DECRYPT) { "legacy v3 messages are disabled" }
                     decryptV3(context, combined, passphraseChars)
@@ -164,11 +167,78 @@ object CryptoEngineV2 {
                 }
                 else -> throw IllegalArgumentException("unsupported format version")
             }
-            // A v4 message opens only once (replay protection); remember it for re-display.
+            // A v4/v6 message opens only once (replay protection); remember it for re-display.
             try { DecryptedMessageCache.put(context, encoded, plain, DecryptedMessageCache.fingerprintOf(passphraseChars)) } catch (_: Exception) { }
             return plain
         } finally {
             Arrays.fill(combined, 0)
+        }
+    }
+
+    private fun decryptV6(
+        context: android.content.Context,
+        combined: ByteArray,
+        passphraseChars: CharArray,
+        senderPublicKey: PublicKey
+    ): CharArray {
+        val flags = CompactFormat.parseFlags(combined[1])
+        val headerLength = CompactFormat.headerLength(flags) + CompactFormat.SALT_LENGTH +
+            CompactFormat.COMPRESSED_POINT_LENGTH
+        require(combined.size > headerLength + TAG_BYTES) { "ciphertext too short" }
+        val header = combined.copyOfRange(0, headerLength)
+        if (flags.hasExpiry) {
+            val expiry = CompactFormat.readExpiry(ByteBuffer.wrap(header, 2, 4))
+            if (System.currentTimeMillis() / 1000L >= expiry) {
+                Arrays.fill(header, 0)
+                throw ExpiredMessageException()
+            }
+        }
+        val saltStart = CompactFormat.headerLength(flags)
+        val salt = header.copyOfRange(saltStart, saltStart + CompactFormat.SALT_LENGTH)
+        val ephemeralCompressed = header.copyOfRange(saltStart + CompactFormat.SALT_LENGTH, headerLength)
+        val cipherBytes = combined.copyOfRange(headerLength, combined.size)
+
+        // Cheap early rejection of an already-opened message (before the expensive KDF). The id
+        // covers the random salt and ephemeral key, so it is unique per message.
+        val messageId = replayId(header, ByteArray(0))
+        if (ENFORCE_REPLAY_PROTECTION && ReplayGuard.isSeen(context, messageId)) {
+            Arrays.fill(header, 0); Arrays.fill(salt, 0); Arrays.fill(cipherBytes, 0)
+            throw ReplayedMessageException()
+        }
+
+        var passphraseKey = ByteArray(0)
+        var dhEphemeral = ByteArray(0)
+        var dhStatic = ByteArray(0)
+        var senderPoint = ByteArray(0)
+        var recipientPoint = ByteArray(0)
+        var key = ByteArray(0)
+        var iv = ByteArray(0)
+        try {
+            val ephemeralPublic = DeviceIdentity.publicKeyFromCompressed(ephemeralCompressed)
+            passphraseKey = CompactFormat.deriveSecret(flags.profile, passphraseChars, salt)
+            dhEphemeral = DeviceIdentity.computeSharedSecret(context, ephemeralPublic)
+            dhStatic = DeviceIdentity.computeSharedSecret(context, senderPublicKey)
+            senderPoint = DeviceIdentity.publicPoint(senderPublicKey)
+            recipientPoint = DeviceIdentity.myPublicPoint(context)
+            val material = CompactFormat.deriveContactKeyAndIv(
+                dhEphemeral, dhStatic, passphraseKey, senderPoint, recipientPoint, header
+            )
+            key = material.first
+            iv = material.second
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            cipher.updateAAD(header)
+            val plainBytes = cipher.doFinal(cipherBytes)
+            try {
+                // Only a message that authenticated may enter the replay cache.
+                if (ENFORCE_REPLAY_PROTECTION) ReplayGuard.markSeen(context, messageId)
+                return utf8ToChars(plainBytes)
+            } finally { Arrays.fill(plainBytes, 0) }
+        } finally {
+            Arrays.fill(passphraseKey, 0); Arrays.fill(dhEphemeral, 0); Arrays.fill(dhStatic, 0)
+            Arrays.fill(senderPoint, 0); Arrays.fill(recipientPoint, 0); Arrays.fill(key, 0)
+            Arrays.fill(iv, 0); Arrays.fill(header, 0); Arrays.fill(salt, 0)
+            Arrays.fill(ephemeralCompressed, 0); Arrays.fill(cipherBytes, 0); Arrays.fill(messageId, 0)
         }
     }
 

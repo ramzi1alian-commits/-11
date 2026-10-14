@@ -17,6 +17,7 @@ object Prefs {
     private const val KEY_DENSITY = "density"
     private const val KEY_KEYBOARD_HEIGHT = "keyboard_height_dp"
     private const val KEY_AUTOCORRECT = "autocorrect_enabled"
+    private const val KEY_FIPS_MODE = "fips_compatible_mode"
     private const val KEY_RETURN_TO_CRYPTO = "return_to_crypto"
     private const val KEY_RETURN_TO_SECURE_COMPOSE = "return_to_secure_compose"
 
@@ -114,6 +115,15 @@ object Prefs {
     fun autocorrectEnabled(context: Context): Boolean {
         val prefs = prefs(context)
         return prefs.getBoolean(KEY_AUTOCORRECT, false)
+    }
+
+    // OFF by default: Argon2id is the stronger default against GPU guessing. This switches NEW
+    // contact messages to the FIPS-compatible v5 format (PBKDF2-HMAC-SHA-256). Reading is
+    // always supported for every format regardless of this setting.
+    fun fipsMode(context: Context): Boolean = prefs(context).getBoolean(KEY_FIPS_MODE, false)
+
+    fun setFipsMode(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_FIPS_MODE, enabled).apply()
     }
 
     fun setAutocorrectEnabled(context: Context, enabled: Boolean) {

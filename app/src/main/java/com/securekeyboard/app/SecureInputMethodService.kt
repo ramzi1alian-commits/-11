@@ -1262,12 +1262,12 @@ class SecureInputMethodService : InputMethodService() {
             var cipherText: String? = null
             try {
                 cipherText = if (selectedSecureContact == null) {
-                    CryptoEngine.encrypt(textChars, passphrase, expirySeconds = null)
+                    CryptoEngine.encrypt(textChars, passphrase, expirySeconds = null, fipsMode = Prefs.fipsMode(this))
                 } else {
                     val keyB64 = ContactStore.getPairedContact(this, selectedSecureContact!!)
                         ?: throw IllegalStateException("paired contact missing")
                     val publicKey = DeviceIdentity.parseContactPublicKey(keyB64)
-                    CryptoEngineV2.encrypt(this, textChars, passphrase, publicKey, expirySeconds = null)
+                    CryptoEngineV2.encrypt(this, textChars, passphrase, publicKey, expirySeconds = null, fipsMode = Prefs.fipsMode(this))
                 }
             } finally {
                 java.util.Arrays.fill(textChars, ' ')
@@ -1400,12 +1400,12 @@ class SecureInputMethodService : InputMethodService() {
             var cipherText: String? = null
             try {
                 cipherText = if (selectedSecureContact == null) {
-                    CryptoEngine.encrypt(textChars, passphrase, expirySeconds = null)
+                    CryptoEngine.encrypt(textChars, passphrase, expirySeconds = null, fipsMode = Prefs.fipsMode(this))
                 } else {
                     val keyB64 = ContactStore.getPairedContact(this, selectedSecureContact!!)
                         ?: throw IllegalStateException("paired contact missing")
                     val publicKey = DeviceIdentity.parseContactPublicKey(keyB64)
-                    CryptoEngineV2.encrypt(this, textChars, passphrase, publicKey, expirySeconds = null)
+                    CryptoEngineV2.encrypt(this, textChars, passphrase, publicKey, expirySeconds = null, fipsMode = Prefs.fipsMode(this))
                 }
             } finally {
                 java.util.Arrays.fill(textChars, ' ')

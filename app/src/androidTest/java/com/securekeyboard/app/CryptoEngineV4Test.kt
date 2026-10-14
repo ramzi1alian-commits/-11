@@ -28,9 +28,9 @@ class CryptoEngineV4Test {
         CryptoEngineV2.encrypt(context, text.toCharArray(), pass.copyOf(), ownKey(), expiry)
 
     @Test
-    fun roundTrip_v4() {
+    fun roundTrip_compact_v6() {
         val encoded = encrypt("hello v4")
-        assertEquals(CryptoEngineV2.FORMAT_VERSION, android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)[0])
+        assertEquals(6.toByte(), android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)[0])
         val plain = CryptoEngineV2.decrypt(context, encoded, pass.copyOf(), ownKey())
         try { assertArrayEquals("hello v4".toCharArray(), plain) } finally { Arrays.fill(plain, '\u0000') }
     }
@@ -78,8 +78,8 @@ class CryptoEngineV4Test {
     @Test
     fun tampered_argon_parameters_and_expiry_are_rejected() {
         val encoded = encrypt()
-        // index 2..9 expiry, 10..13 argon memory, 14 iterations, 15 parallelism
-        for (index in intArrayOf(3, 12, 14, 15, 20)) {
+        // v6 layout (no expiry): 1 flags, 2..17 salt, 18..50 ephemeral key, 51.. ciphertext+tag
+        for (index in intArrayOf(1, 2, 17, 18, 25, 51, 55)) {
             val raw = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
             raw[index] = (raw[index].toInt() xor 0x01).toByte()
             val tampered = android.util.Base64.encodeToString(raw, android.util.Base64.NO_WRAP)

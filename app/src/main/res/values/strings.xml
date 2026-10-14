@@ -85,6 +85,8 @@
     <string name="clear_phrases_btn">مسح الجمل المحفوظة</string>
     <string name="phrases_cleared_toast">تم مسح كل الجمل المحفوظة</string>
 
+    <string name="fips_title">وضع متوافق مع FIPS (PBKDF2)</string>
+    <string name="fips_desc">يجعل الرسائل الجديدة المرتبطة بجهات الاتصال تستخدم PBKDF2-HMAC-SHA-256 بدل Argon2id (ملف التعريف 4 في الصيغة المصغّرة v6/v7). هذا توافق في الخوارزميات فقط وليس اعتماد FIPS 140-3. Argon2id أقوى أمام كسر عبارة المرور بالعتاد، لذلك الوضع مطفأ افتراضياً، فعّله فقط إذا طلبته جهة ما. الرسائل القديمة تُفتح دائماً بغض النظر عن هذا الخيار.</string>
     <string name="autocorrect_title">التصحيح التلقائي</string>
     <string name="autocorrect_desc">يستبدل عدد محدود من الأخطاء الإملائية الشائعة (عربي وإنجليزي) تلقائيا عند إنهاء الكلمة - قائمة ثابتة داخل التطبيق، مش نموذج بيتعلم من كتابتك. مطفأ افتراضيا.</string>
     <string name="autocorrect_switch_label">تفعيل التصحيح التلقائي</string>
@@ -163,6 +165,14 @@
     <string name="pairing_name_required">أدخل اسم جهة الاتصال أولًا</string>
 
     <string name="secure_file_receive_title">فك ملف SecureKeyboard</string>
+    <string name="reason_prefix">السبب:</string>
+    <string name="reason_debuggable">التطبيق مبني بوضع debug (قابل للتنقيح). ابنِه بوضع release موقّع بمفتاحك.</string>
+    <string name="reason_debugger">مُنقِّح (debugger) متصل بالتطبيق.</string>
+    <string name="reason_tracer">عملية تتبّع (ptrace) مرتبطة بالتطبيق.</string>
+    <string name="reason_instrumentation">ظهرت أداة حقن/تتبّع (مثل Frida أو Xposed) في ذاكرة التطبيق.</string>
+    <string name="reason_test_keys">النظام موقّع بمفاتيح اختبار (test-keys)، وهذا شائع في الروماتّ المعدّلة وبعض الأجهزة حتى بدون روت.</string>
+    <string name="reason_su">وُجد ملف su في النظام.</string>
+    <string name="reason_signature">توقيع التطبيق لا يطابق التوقيع المثبّت.</string>
     <string name="security_environment_warning">تحذير أمني: بيئة تشغيل غير موثوقة أو خاضعة للمراقبة. لا تجرِ عمليات حساسة على هذا الجهاز.</string>
     <string name="err_replayed">هذه الرسالة فُكّ تشفيرها سابقاً على هذا الجهاز، ولا يمكن فتحها مرة ثانية (حماية من إعادة الإرسال).</string>
     <string name="crypto_panel_replayed_toast">هذه الرسالة فُتحت سابقاً ولا يمكن فكها مرة ثانية</string>
@@ -174,6 +184,10 @@
     <string name="auto_decrypt_state_service_off">الخدمة: غير مفعّلة — اضغط الزر ثم فعّل «فك التشفير التلقائي» (في أندرويد 13+ قد تحتاج أولاً «السماح بالإعدادات المقيّدة» من معلومات التطبيق)</string>
     <string name="auto_decrypt_state_session_on">مفتاح الجلسة: نشط ✓</string>
     <string name="auto_decrypt_state_session_off">مفتاح الجلسة: غير نشط — فعّله من لوحة التشفير في الكيبورد</string>
+    <string name="auto_decrypt_working">⏳ جارٍ فك التشفير…</string>
+    <string name="auto_decrypt_no_key">🔑 اختر مفتاح الجلسة أولاً من لوحة التشفير في الكيبورد</string>
+    <string name="auto_decrypt_wrong_key">🔒 تعذّر الفك: المفتاح غير صحيح أو الرسالة لمرسل آخر</string>
+    <string name="auto_decrypt_bad_text">⚠️ النص المشفّر غير صالح أو ناقص (ربما قُطع عند النسخ)</string>
     <string name="auto_decrypt_expired">⏳ انتهت صلاحية هذه الرسالة</string>
     <string name="auto_decrypt_replayed">هذه الرسالة فُتحت سابقاً ولم يعد نصها محفوظاً</string>
 </resources>
