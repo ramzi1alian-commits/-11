@@ -15,6 +15,11 @@ import java.util.Arrays
  *  - Messages you SEND are encrypted to the recipient and cannot be decrypted by you, so
  *    their plaintext is stored at send time to be shown in your own chat bubbles.
  *
+ * Every entry is bound to a fingerprint of the passphrase it was produced with. An entry is
+ * only returned while the SAME passphrase is in use: after the key is changed, plaintexts
+ * of earlier messages are no longer shown (and are never offered for the new key). Entering
+ * the old key again makes them visible again, because the fingerprint matches once more.
+ *
  * Stored with the Keystore-backed LocalStorageCrypto. Bounded by entry count, total size
  * and age. [clear] wipes everything. Set [ENABLED] = false to turn the feature off
  * (nothing is then written or shown).
@@ -24,14 +29,15 @@ object DecryptedMessageCache {
 
     private const val FILE_NAME = "decrypted_cache_v1.enc"
     private const val TEMP_NAME = "decrypted_cache_v1.enc.tmp"
-    private const val FORMAT = 1
+    private const val FORMAT = 2 // v1 files had no key binding and are discarded on load
     private const val KEY_LENGTH = 16
+    private const val FP_LENGTH = 16
     private const val MAX_ENTRIES = 500
     private const val MAX_TEXT_BYTES = 16 * 1024
     private const val MAX_TOTAL_BYTES = 2 * 1024 * 1024
     private const val MAX_AGE_MS = 30L * 24L * 60L * 60L * 1000L
 
-    private class Entry(val storedAtMs: Long, val text: ByteArray)
+    private class Entry(val storedAtMs: Long, val text: ByteArray, val fp: String)
 
     // Insertion-ordered: the first entry is the oldest.
     private var memory: LinkedHashMap<String, Entry>? = null
@@ -46,21 +52,46 @@ object DecryptedMessageCache {
         return sb.toString()
     }
 
+    /**
+     * Identifies a passphrase without revealing it. Only ever stored inside the
+     * Keystore-encrypted cache file and compared in memory.
+     */
+    fun fingerprintOf(passphrase: CharArray): String {
+        val bytes = CryptoEngine.charsToUtf8Bytes(passphrase)
+        try {
+            val md = MessageDigest.getInstance("SHA-256")
+            md.update("SecureKeyboard/message-cache-binding/v1".toByteArray(Charsets.UTF_8))
+            md.update(0)
+            md.update(bytes)
+            val digest = md.digest()
+            val sb = StringBuilder(FP_LENGTH * 2)
+            for (i in 0 until FP_LENGTH) {
+                val v = digest[i].toInt() and 0xff
+                sb.append("0123456789abcdef"[v ushr 4]).append("0123456789abcdef"[v and 0x0f])
+            }
+            return sb.toString()
+        } finally {
+            Arrays.fill(bytes, 0)
+        }
+    }
+
     @Synchronized
     fun preload(context: Context) {
         if (ENABLED) load(context)
     }
 
     @Synchronized
-    fun get(context: Context, ciphertext: String): String? {
+    fun get(context: Context, ciphertext: String, fingerprint: String): String? {
         if (!ENABLED) return null
         val entry = load(context)[keyOf(ciphertext)] ?: return null
+        // Stored under a different passphrase: not visible with the current one.
+        if (!MessageDigest.isEqual(entry.fp.toByteArray(Charsets.UTF_8), fingerprint.toByteArray(Charsets.UTF_8))) return null
         if (System.currentTimeMillis() - entry.storedAtMs > MAX_AGE_MS) return null
         return String(entry.text, Charsets.UTF_8)
     }
 
     @Synchronized
-    fun put(context: Context, ciphertext: String, plain: CharArray) {
+    fun put(context: Context, ciphertext: String, plain: CharArray, fingerprint: String) {
         if (!ENABLED) return
         val bytes = CryptoEngine.charsToUtf8Bytes(plain)
         if (bytes.isEmpty() || bytes.size > MAX_TEXT_BYTES) {
@@ -70,7 +101,7 @@ object DecryptedMessageCache {
         val map = load(context)
         val key = keyOf(ciphertext)
         map.remove(key)?.let { Arrays.fill(it.text, 0) }
-        map[key] = Entry(System.currentTimeMillis(), bytes)
+        map[key] = Entry(System.currentTimeMillis(), bytes, fingerprint)
         prune(map)
         save(context, map)
     }
@@ -114,15 +145,17 @@ object DecryptedMessageCache {
                         val count = buf.int
                         if (count in 0..MAX_ENTRIES) {
                             repeat(count) {
-                                if (buf.remaining() < KEY_LENGTH + 12) throw IllegalStateException("truncated")
+                                if (buf.remaining() < KEY_LENGTH + FP_LENGTH + 12) throw IllegalStateException("truncated")
                                 val keyBytes = ByteArray(KEY_LENGTH)
                                 buf.get(keyBytes)
+                                val fpBytes = ByteArray(FP_LENGTH)
+                                buf.get(fpBytes)
                                 val storedAt = buf.long
                                 val len = buf.int
                                 if (len < 0 || len > MAX_TEXT_BYTES || buf.remaining() < len) throw IllegalStateException("bad length")
                                 val text = ByteArray(len)
                                 buf.get(text)
-                                result[hex(keyBytes)] = Entry(storedAt, text)
+                                result[hex(keyBytes)] = Entry(storedAt, text, hex(fpBytes))
                             }
                         }
                     }
@@ -139,11 +172,11 @@ object DecryptedMessageCache {
 
     private fun save(context: Context, map: LinkedHashMap<String, Entry>) {
         var total = 8
-        for (e in map.values) total += KEY_LENGTH + 8 + 4 + e.text.size
+        for (e in map.values) total += KEY_LENGTH + FP_LENGTH + 8 + 4 + e.text.size
         val buf = ByteBuffer.allocate(total)
         buf.putInt(FORMAT).putInt(map.size)
         for ((k, e) in map) {
-            buf.put(unhex(k)).putLong(e.storedAtMs).putInt(e.text.size).put(e.text)
+            buf.put(unhex(k)).put(unhex(e.fp)).putLong(e.storedAtMs).putInt(e.text.size).put(e.text)
         }
         val bytes = buf.array()
         var encrypted: ByteArray? = null

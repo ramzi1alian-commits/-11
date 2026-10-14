@@ -127,7 +127,7 @@ object CryptoEngineV2 {
             val encoded = Base64.encodeToString(header + iv + cipherBytes, Base64.NO_WRAP)
             // You cannot decrypt your own outgoing message (it is encrypted to the recipient),
             // so remember its plaintext to show it in your own chat bubble. Never fails a send.
-            try { DecryptedMessageCache.put(context, encoded, textChars) } catch (_: Exception) { }
+            try { DecryptedMessageCache.put(context, encoded, textChars, DecryptedMessageCache.fingerprintOf(passphraseChars)) } catch (_: Exception) { }
             return encoded
         } finally {
             Arrays.fill(passphraseKey, 0); Arrays.fill(dhEphemeral, 0); Arrays.fill(dhStatic, 0)
@@ -165,7 +165,7 @@ object CryptoEngineV2 {
                 else -> throw IllegalArgumentException("unsupported format version")
             }
             // A v4 message opens only once (replay protection); remember it for re-display.
-            try { DecryptedMessageCache.put(context, encoded, plain) } catch (_: Exception) { }
+            try { DecryptedMessageCache.put(context, encoded, plain, DecryptedMessageCache.fingerprintOf(passphraseChars)) } catch (_: Exception) { }
             return plain
         } finally {
             Arrays.fill(combined, 0)

@@ -18,22 +18,32 @@ class DecryptedMessageCacheTest {
         DecryptedMessageCache.clear(context)
     }
 
+    private val fp = DecryptedMessageCache.fingerprintOf("test-key-one".toCharArray())
+    private val otherFp = DecryptedMessageCache.fingerprintOf("test-key-two".toCharArray())
+
     @Test
     fun put_then_get_roundTrips_and_ignores_surrounding_whitespace() {
-        DecryptedMessageCache.put(context, "QUJD", "مرحبا 🔐".toCharArray())
-        assertEquals("مرحبا 🔐", DecryptedMessageCache.get(context, "  QUJD\n"))
+        DecryptedMessageCache.put(context, "QUJD", "مرحبا 🔐".toCharArray(), fp)
+        assertEquals("مرحبا 🔐", DecryptedMessageCache.get(context, "  QUJD\n", fp))
+    }
+
+    @Test
+    fun entry_is_not_returned_after_the_key_changed() {
+        DecryptedMessageCache.put(context, "QUJD", "secret".toCharArray(), fp)
+        assertNull(DecryptedMessageCache.get(context, "QUJD", otherFp))
+        assertEquals("secret", DecryptedMessageCache.get(context, "QUJD", fp))
     }
 
     @Test
     fun unknown_ciphertext_returns_null() {
-        assertNull(DecryptedMessageCache.get(context, "never-stored"))
+        assertNull(DecryptedMessageCache.get(context, "never-stored", fp))
     }
 
     @Test
     fun clear_removes_everything() {
-        DecryptedMessageCache.put(context, "QUJD", "x".toCharArray())
+        DecryptedMessageCache.put(context, "QUJD", "x".toCharArray(), fp)
         DecryptedMessageCache.clear(context)
-        assertNull(DecryptedMessageCache.get(context, "QUJD"))
+        assertNull(DecryptedMessageCache.get(context, "QUJD", fp))
     }
 
     @Test
@@ -46,6 +56,7 @@ class DecryptedMessageCacheTest {
         val pass = "cache-test-passphrase".toCharArray()
         val me = DeviceIdentity.parseContactPublicKey(DeviceIdentity.myPublicKeyBase64(context))
         val encoded = CryptoEngineV2.encrypt(context, "sent text".toCharArray(), pass, me)
-        assertEquals("sent text", DecryptedMessageCache.get(context, encoded))
+        assertEquals("sent text", DecryptedMessageCache.get(context, encoded, DecryptedMessageCache.fingerprintOf(pass)))
+        assertNull(DecryptedMessageCache.get(context, encoded, otherFp))
     }
 }

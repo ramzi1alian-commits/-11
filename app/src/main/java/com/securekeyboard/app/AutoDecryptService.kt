@@ -20,6 +20,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.TextView
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Shows decrypted text on top of encrypted messages inside chat apps, without any tap.
@@ -35,6 +36,14 @@ import java.util.concurrent.Executors
  *  - Never reads password fields; ignores everything that is not a whole-node Base64 token.
  *  - Never stores or logs screen content other than decrypted messages (encrypted cache).
  *  - Works only while the session passphrase is active (the 30-minute keyboard session).
+ *  - Everything shown is bound to the passphrase that is active RIGHT NOW (see
+ *    [DecryptedMessageCache.fingerprintOf]). When the key changes, earlier plaintexts
+ *    disappear, and every failure/notice remembered for the old key is forgotten so
+ *    messages are tried again with the new one.
+ *
+ * Smooth scrolling: the screen scan (IPC-heavy) runs on its own thread; the main thread only
+ * moves ready-made cards. Between scans the cards are shifted by the scroll delta that the
+ * scroll event reports, so they follow the bubbles instead of jumping every ~100 ms.
  */
 class AutoDecryptService : AccessibilityService() {
 
@@ -48,9 +57,10 @@ class AutoDecryptService : AccessibilityService() {
             "com.viber.voip", "com.discord",
             "com.google.android.apps.messaging", "com.samsung.android.messaging", "com.android.mms"
         )
-        private val TOKEN = Regex("^[A-Za-z0-9+/]{100,}={0,2}$")
-        private val TOKEN_IN_TEXT = Regex("[A-Za-z0-9+/]{100,}={0,2}")
-        private const val MIN_LEN = 100
+        private val TOKEN = Regex("^(?:Ag|Aw|BA)[A-Za-z0-9+/]{78,}={0,2}$")
+        private val TOKEN_IN_TEXT = Regex("(?:Ag|Aw|BA)[A-Za-z0-9+/]{78,}={0,2}")
+        // Smallest real message (v3, 1-char text) is 84 Base64 chars; 100 hid every short message.
+        private const val MIN_LEN = 80
         private const val MAX_LEN = 24_000
         private const val MAX_NODES = 1500
         private const val MAX_DEPTH = 40
@@ -61,20 +71,38 @@ class AutoDecryptService : AccessibilityService() {
     }
 
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
+    // Decryption (Argon2, can take long) must never delay screen scans, so they get separate threads.
+    private val decryptor = Executors.newSingleThreadExecutor()
+    private val scanner = Executors.newSingleThreadExecutor()
     private var overlay: FrameLayout? = null
 
-    // All three maps are touched on the main thread only.
-    private val pending = HashSet<String>()
-    private val retryAfter = HashMap<String, Long>()
-    private val notices = HashMap<String, String>()
+    /** One visible ciphertext. [id] = ciphertext hash + key fingerprint, so state is per key. */
+    private class ScanItem(val token: String, val id: String, val rect: Rect)
 
-    private var refreshQueued = false
+    /** [fp] is null when no session key is active. */
+    private class ScanResult(val fp: String?, val items: List<ScanItem>)
+
+    private class CardState(var text: String, var style: Int, var width: Int, var minHeight: Int)
+
+    // All of this is touched on the main thread only.
+    private var currentFp: String? = null
+    private val memo = HashMap<String, String>()          // id -> plaintext ready to draw
+    private val pending = HashSet<String>()               // id -> decryption in flight
+    private val retryAfter = HashMap<String, Long>()      // id -> do not retry before
+    private val notices = HashMap<String, String>()       // id -> "expired" / "already opened"
+
+    private var scanQueued = false
+    private var scanRunning = false
+    private var scanDirty = false
     private var lastRefreshAt = 0L
-    private val refreshRunnable = Runnable {
-        refreshQueued = false
+    // Total vertical scroll (px) reported by scroll events so far; used to correct scan results
+    // that were taken before the latest scroll.
+    private var shiftY = 0
+
+    private val scanRunnable = Runnable {
+        scanQueued = false
         lastRefreshAt = SystemClock.uptimeMillis()
-        refresh()
+        startScan()
     }
 
     // While decrypted text is on screen, re-check the session key every couple of
@@ -82,6 +110,7 @@ class AutoDecryptService : AccessibilityService() {
     // screen event).
     private val expiryRunnable = Runnable {
         if (!SessionKeyStore.isActive()) {
+            wipeState()
             clearOverlay()
         } else if ((overlay?.childCount ?: 0) > 0) {
             scheduleExpiryCheck()
@@ -93,10 +122,19 @@ class AutoDecryptService : AccessibilityService() {
         main.postDelayed(expiryRunnable, EXPIRY_CHECK_MS)
     }
 
+    /** Forget everything tied to a key (plaintext in memory, failures, notices). */
+    private fun wipeState() {
+        currentFp = null
+        memo.clear()
+        pending.clear()
+        retryAfter.clear()
+        notices.clear()
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         SessionKeyStore.initialize(applicationContext)
-        worker.execute {
+        decryptor.execute {
             try { DecryptedMessageCache.preload(applicationContext) } catch (_: Exception) { }
         }
     }
@@ -105,7 +143,28 @@ class AutoDecryptService : AccessibilityService() {
         if (event == null) return
         // Our own windows (keyboard, this overlay) must never trigger work: no feedback loop.
         if (event.packageName?.toString() == packageName) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+        ) {
+            val cls = event.className?.toString() ?: ""
+            val dy = event.scrollDeltaY
+            if (dy != 0 && !cls.contains("Horizontal") && !cls.contains("ViewPager") &&
+                Math.abs(dy) < resources.displayMetrics.heightPixels
+            ) {
+                applyScrollShift(dy)
+            }
+        }
         scheduleRefresh()
+    }
+
+    /** Content moved up by [dy] px: move the cards with it right away, before the next scan. */
+    private fun applyScrollShift(dy: Int) {
+        shiftY += dy
+        val c = overlay ?: return
+        for (i in 0 until c.childCount) {
+            val v = c.getChildAt(i)
+            v.translationY = v.translationY - dy
+        }
     }
 
     override fun onInterrupt() {
@@ -115,38 +174,78 @@ class AutoDecryptService : AccessibilityService() {
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
         removeOverlayWindow()
-        worker.shutdownNow()
+        wipeState()
+        decryptor.shutdownNow()
+        scanner.shutdownNow()
         super.onDestroy()
     }
 
     private fun scheduleRefresh() {
-        if (refreshQueued) return
-        refreshQueued = true
-        // Short throttle (not a long debounce) so the cards follow the bubbles while scrolling.
-        val wait = (MIN_REFRESH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastRefreshAt)).coerceAtLeast(0L)
-        main.postDelayed(refreshRunnable, wait)
-    }
-
-    private fun refresh() {
-        val root = try { rootInActiveWindow } catch (_: Exception) { null }
-        if (root == null) {
-            clearOverlay()
+        if (scanRunning) {
+            scanDirty = true
             return
         }
+        if (scanQueued) return
+        scanQueued = true
+        // Short throttle (not a long debounce) so the cards follow the bubbles while scrolling.
+        val wait = (MIN_REFRESH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastRefreshAt)).coerceAtLeast(0L)
+        main.postDelayed(scanRunnable, wait)
+    }
+
+    private fun startScan() {
+        scanRunning = true
+        scanDirty = false
+        val shiftAtStart = shiftY
+        try {
+            scanner.execute {
+                val result = try { scan() } catch (_: Exception) { null }
+                main.post {
+                    scanRunning = false
+                    onScanResult(result, shiftAtStart)
+                    if (scanDirty) scheduleRefresh()
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            scanRunning = false
+        }
+    }
+
+    /** Runs on the scanner thread. */
+    private fun scan(): ScanResult {
+        // The active key's fingerprint decides what may be shown and what state is valid.
+        val pass = SessionKeyStore.get() ?: return ScanResult(null, emptyList())
+        val fp = try { DecryptedMessageCache.fingerprintOf(pass) } finally { SecureMemory.wipe(pass) }
+        val root = try { rootInActiveWindow } catch (_: Exception) { null }
+            ?: return ScanResult(fp, emptyList())
         try {
             val pkg = root.packageName?.toString()
-            if (pkg == null || pkg !in SUPPORTED_PACKAGES) {
-                clearOverlay()
-                return
-            }
+            if (pkg == null || pkg !in SUPPORTED_PACKAGES) return ScanResult(fp, emptyList())
             val found = ArrayList<Pair<String, Rect>>()
             collect(root, 0, IntArray(1), found)
-            render(found)
-        } catch (_: Exception) {
-            clearOverlay()
+            val items = ArrayList<ScanItem>(found.size)
+            for ((token, rect) in found) {
+                items.add(ScanItem(token, DecryptedMessageCache.keyOf(token) + fp, rect))
+            }
+            return ScanResult(fp, items)
         } finally {
             recycleNode(root)
         }
+    }
+
+    private fun onScanResult(result: ScanResult?, shiftAtStart: Int) {
+        val fp = result?.fp
+        if (result == null || fp == null) {
+            // No active key (expired or cleared): show nothing and drop all plaintext.
+            wipeState()
+            clearOverlay()
+            return
+        }
+        if (fp != currentFp) {
+            // The key changed: nothing remembered for the old key may be reused or blocked.
+            wipeState()
+            currentFp = fp
+        }
+        render(result.items, fp, shiftY - shiftAtStart)
     }
 
     private fun collect(
@@ -189,21 +288,14 @@ class AutoDecryptService : AccessibilityService() {
         return m.value.takeIf { it.length <= MAX_LEN }
     }
 
-    private fun render(found: List<Pair<String, Rect>>) {
-        // Once the session key has expired nothing is shown any more, not even messages
-        // that were decrypted earlier and are still in the cache.
-        if (!SessionKeyStore.isActive()) {
-            clearOverlay()
-            return
-        }
+    private fun render(items: List<ScanItem>, fp: String, scrolledSinceScan: Int) {
         val toShow = ArrayList<Pair<Rect, String>>()
-        for ((token, rect) in found) {
-            val key = DecryptedMessageCache.keyOf(token)
-            val text = DecryptedMessageCache.get(applicationContext, token) ?: notices[key]
+        for (item in items) {
+            val text = memo[item.id] ?: notices[item.id]
             if (text != null) {
-                toShow.add(Pair(rect, text))
+                toShow.add(Pair(item.rect, text))
             } else {
-                requestDecrypt(token, key)
+                requestDecrypt(item, fp)
             }
         }
         if (toShow.isEmpty()) {
@@ -217,54 +309,85 @@ class AutoDecryptService : AccessibilityService() {
             val existing = container.getChildAt(i) as? TextView
             if (existing == null) {
                 val tv = TextView(this)
-                bindCard(tv, item.first, item.second)
+                tv.layoutParams = FrameLayout.LayoutParams(
+                    item.first.width(), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.LEFT
+                )
+                bindCard(tv, item.first, item.second, scrolledSinceScan)
                 container.addView(tv)
             } else {
-                bindCard(existing, item.first, item.second)
+                bindCard(existing, item.first, item.second, scrolledSinceScan)
             }
         }
         scheduleExpiryCheck()
     }
 
-    private fun requestDecrypt(token: String, key: String) {
-        if (pending.contains(key)) return
+    private fun requestDecrypt(item: ScanItem, fp: String) {
+        val id = item.id
+        if (pending.contains(id)) return
         val now = SystemClock.elapsedRealtime()
-        val until = retryAfter[key]
+        val until = retryAfter[id]
         if (until != null && until > now) return
-        if (!SessionKeyStore.isActive()) return
-        pending.add(key)
-        worker.execute {
-            var plain: CharArray? = null
-            var notice: String? = null
-            val pass = SessionKeyStore.get()
-            if (pass != null) {
+        pending.add(id)
+        val token = item.token
+        try {
+            decryptor.execute {
+                var text: String? = null
+                var notice: String? = null
+                var failed = false
                 try {
-                    val result = decryptToken(token, pass)
-                    plain = result.first
-                    notice = result.second
-                } catch (_: Exception) {
-                    // Treated as a failure below.
-                } finally {
-                    SecureMemory.wipe(pass)
-                }
-            }
-            val success = plain != null
-            val finalNotice: String? = notice
-            if (plain != null) {
-                try { DecryptedMessageCache.put(applicationContext, token, plain) } catch (_: Exception) { }
-                SecureMemory.wipe(plain)
-            }
-            main.post {
-                pending.remove(key)
-                if (!success) {
-                    if (finalNotice != null) {
-                        notices[key] = finalNotice
-                    } else {
-                        retryAfter[key] = SystemClock.elapsedRealtime() + FAILURE_RETRY_MS
+                    // Already decrypted under THIS key (also covers a message opened by the keyboard).
+                    text = DecryptedMessageCache.get(applicationContext, token, fp)
+                    if (text == null) {
+                        val pass = SessionKeyStore.get()
+                        if (pass != null) {
+                            try {
+                                // The key may have been changed while this job waited in the queue.
+                                if (DecryptedMessageCache.fingerprintOf(pass) == fp) {
+                                    var plain: CharArray? = null
+                                    try {
+                                        val result = decryptToken(token, pass)
+                                        plain = result.first
+                                        notice = result.second
+                                        if (plain != null) {
+                                            text = String(plain)
+                                            try {
+                                                DecryptedMessageCache.put(applicationContext, token, plain, fp)
+                                            } catch (_: Exception) { }
+                                        } else if (notice == null) {
+                                            failed = true
+                                        }
+                                    } catch (_: Exception) {
+                                        failed = true
+                                    } finally {
+                                        SecureMemory.wipe(plain)
+                                    }
+                                }
+                            } finally {
+                                SecureMemory.wipe(pass)
+                            }
+                        }
                     }
+                } catch (_: Exception) {
+                    failed = true
                 }
-                scheduleRefresh()
+                val finalText = text
+                val finalNotice = notice
+                val finalFailed = failed
+                main.post {
+                    pending.remove(id)
+                    // Only results for the key that is still active are kept.
+                    if (currentFp == fp) {
+                        when {
+                            finalText != null -> memo[id] = finalText
+                            finalNotice != null -> notices[id] = finalNotice
+                            finalFailed -> retryAfter[id] = SystemClock.elapsedRealtime() + FAILURE_RETRY_MS
+                        }
+                    }
+                    scheduleRefresh()
+                }
             }
+        } catch (_: RejectedExecutionException) {
+            pending.remove(id)
         }
     }
 
@@ -323,38 +446,51 @@ class AutoDecryptService : AccessibilityService() {
         return if (rtl) marginLeft < marginRight else marginRight < marginLeft
     }
 
-    private fun bindCard(tv: TextView, rect: Rect, text: String) {
+    private fun bindCard(tv: TextView, rect: Rect, text: String, scrolledSinceScan: Int) {
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         val density = resources.displayMetrics.density
         val outgoing = isOutgoing(rect)
-        // WhatsApp-like colours: sent = green, received = white (dark theme equivalents).
-        val fill = when {
-            outgoing && night -> "#005C4B"
-            outgoing -> "#D9FDD3"
-            night -> "#202C33"
-            else -> "#FFFFFF"
+        val style = (if (night) 2 else 0) + (if (outgoing) 1 else 0)
+        val state = tv.tag as? CardState
+        // Only touch what actually changed: re-setting text/background/padding on every
+        // scan forces a new layout pass per card and is what made scrolling stutter.
+        if (state == null || state.style != style) {
+            // WhatsApp-like colours: sent = green, received = white (dark theme equivalents).
+            val fill = when {
+                outgoing && night -> "#005C4B"
+                outgoing -> "#D9FDD3"
+                night -> "#202C33"
+                else -> "#FFFFFF"
+            }
+            tv.background = GradientDrawable().apply {
+                cornerRadius = 12f * density
+                setColor(Color.parseColor(fill))
+                setStroke((1.5f * density).toInt().coerceAtLeast(1), Color.parseColor("#2E7D32"))
+            }
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            tv.setTextColor(if (night) Color.parseColor("#E9EDEF") else Color.parseColor("#111B21"))
+            val pad = (8f * density).toInt()
+            tv.setPadding(pad, pad, pad, pad)
         }
-        val bg = GradientDrawable().apply {
-            cornerRadius = 12f * density
-            setColor(Color.parseColor(fill))
-            setStroke((1.5f * density).toInt().coerceAtLeast(1), Color.parseColor("#2E7D32"))
+        if (state == null || state.text != text) {
+            tv.text = "\uD83D\uDD13 $text"
         }
-        tv.text = "\uD83D\uDD13 $text"
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        tv.setTextColor(if (night) Color.parseColor("#E9EDEF") else Color.parseColor("#111B21"))
-        tv.background = bg
-        val pad = (8f * density).toInt()
-        tv.setPadding(pad, pad, pad, pad)
-        tv.minHeight = rect.height()
-        val lp = (tv.layoutParams as? FrameLayout.LayoutParams)
-            ?: FrameLayout.LayoutParams(rect.width(), FrameLayout.LayoutParams.WRAP_CONTENT)
-        lp.width = rect.width()
-        lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
-        lp.gravity = Gravity.TOP or Gravity.LEFT
-        lp.leftMargin = rect.left
-        lp.topMargin = rect.top
-        tv.layoutParams = lp
+        if (state == null || state.minHeight != rect.height()) {
+            tv.minHeight = rect.height()
+        }
+        if (state == null || state.width != rect.width()) {
+            val lp = (tv.layoutParams as? FrameLayout.LayoutParams)
+                ?: FrameLayout.LayoutParams(rect.width(), FrameLayout.LayoutParams.WRAP_CONTENT)
+            lp.width = rect.width()
+            lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
+            lp.gravity = Gravity.TOP or Gravity.LEFT
+            tv.layoutParams = lp
+        }
+        tv.tag = CardState(text, style, rect.width(), rect.height())
+        // Position through translation: moving a card never triggers a layout pass.
+        tv.translationX = rect.left.toFloat()
+        tv.translationY = (rect.top - scrolledSinceScan).toFloat()
     }
 
     private fun ensureOverlay(): FrameLayout? {
