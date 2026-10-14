@@ -178,9 +178,10 @@ class CryptoEngineUnitTest {
 
     @Test
     fun `already-expired message throws ExpiredMessageException on decrypt`() {
-        // expirySeconds = 0 means "expires immediately" (epoch = now).
-        val encoded = CryptoEngine.encrypt("expiring".toCharArray(), freshPass(), 0L)
-        Thread.sleep(1100) // ensure the 1-second epoch resolution has ticked past expiry
+        // encrypt() only accepts 1 second..1 year (0 and negatives are rejected, see the tests above),
+        // so use the shortest valid expiry and wait until the 1-second epoch resolution has passed it.
+        val encoded = CryptoEngine.encrypt("expiring".toCharArray(), freshPass(), 1L)
+        Thread.sleep(2200)
         try {
             CryptoEngine.decrypt(encoded, freshPass())
             fail("expired message must not decrypt")

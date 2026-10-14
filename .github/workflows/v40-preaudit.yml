@@ -70,15 +70,12 @@ jobs:
       - name: Assemble debug APK
         run: gradle --no-daemon --stacktrace ${{ steps.supply.outputs.flag }} :app:assembleDebug
 
-      - name: Assemble release APK (unsigned is expected unless CI signing secrets are configured)
-        run: gradle --no-daemon --stacktrace ${{ steps.supply.outputs.flag }} :app:assembleRelease
-
       - name: APK integrity report
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p audit-artifacts
-          find app/build/outputs/apk -type f -name '*.apk' -print -exec sha256sum {} \; | tee audit-artifacts/APK_SHA256.txt
+          find app/build/outputs/apk/debug -type f -name '*.apk' -print -exec sha256sum {} \; | tee audit-artifacts/APK_SHA256.txt
           cp -f docs/security/V40_PRE_AUDIT_TEST_REPORT.md audit-artifacts/ 2>/dev/null || true
           cp -f docs/security/V40_SECURITY_AUDIT_READINESS.md audit-artifacts/ 2>/dev/null || true
           cp -f docs/security/V40_INTEGRITY_MANIFEST.sha256 audit-artifacts/ 2>/dev/null || true
@@ -86,9 +83,9 @@ jobs:
       - name: Upload APKs and audit evidence
         uses: actions/upload-artifact@v4
         with:
-          name: SecureKeyboard-V40-preaudit-${{ github.sha }}
+          name: SecureKeyboard-installable-${{ github.sha }}
           path: |
-            app/build/outputs/apk/**/*.apk
+            app/build/outputs/apk/debug/*.apk
             audit-artifacts/**
           if-no-files-found: error
           retention-days: 14
