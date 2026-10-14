@@ -49,12 +49,14 @@ class AutoDecryptService : AccessibilityService() {
             "com.google.android.apps.messaging", "com.samsung.android.messaging", "com.android.mms"
         )
         private val TOKEN = Regex("^[A-Za-z0-9+/]{100,}={0,2}$")
+        private val TOKEN_IN_TEXT = Regex("[A-Za-z0-9+/]{100,}={0,2}")
         private const val MIN_LEN = 100
         private const val MAX_LEN = 24_000
         private const val MAX_NODES = 1500
         private const val MAX_DEPTH = 40
         private const val MAX_TOKENS_PER_PASS = 40
-        private const val DEBOUNCE_MS = 150L
+        private const val MIN_REFRESH_INTERVAL_MS = 30L
+        private const val EXPIRY_CHECK_MS = 2_000L
         private const val FAILURE_RETRY_MS = 5 * 60 * 1000L
     }
 
@@ -68,9 +70,27 @@ class AutoDecryptService : AccessibilityService() {
     private val notices = HashMap<String, String>()
 
     private var refreshQueued = false
+    private var lastRefreshAt = 0L
     private val refreshRunnable = Runnable {
         refreshQueued = false
+        lastRefreshAt = SystemClock.uptimeMillis()
         refresh()
+    }
+
+    // While decrypted text is on screen, re-check the session key every couple of
+    // seconds so the text disappears as soon as the key expires (even without any
+    // screen event).
+    private val expiryRunnable = Runnable {
+        if (!SessionKeyStore.isActive()) {
+            clearOverlay()
+        } else if ((overlay?.childCount ?: 0) > 0) {
+            scheduleExpiryCheck()
+        }
+    }
+
+    private fun scheduleExpiryCheck() {
+        main.removeCallbacks(expiryRunnable)
+        main.postDelayed(expiryRunnable, EXPIRY_CHECK_MS)
     }
 
     override fun onServiceConnected() {
@@ -102,7 +122,9 @@ class AutoDecryptService : AccessibilityService() {
     private fun scheduleRefresh() {
         if (refreshQueued) return
         refreshQueued = true
-        main.postDelayed(refreshRunnable, DEBOUNCE_MS)
+        // Short throttle (not a long debounce) so the cards follow the bubbles while scrolling.
+        val wait = (MIN_REFRESH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastRefreshAt)).coerceAtLeast(0L)
+        main.postDelayed(refreshRunnable, wait)
     }
 
     private fun refresh() {
@@ -135,15 +157,16 @@ class AutoDecryptService : AccessibilityService() {
     ) {
         if (depth > MAX_DEPTH || counter[0] >= MAX_NODES || out.size >= MAX_TOKENS_PER_PASS) return
         counter[0]++
+        if (depth > 0 && !node.isVisibleToUser) return
         if (!node.isPassword && node.isVisibleToUser) {
-            val text = node.text
-            if (text != null && text.length in MIN_LEN..MAX_LEN) {
-                val s = text.toString().trim()
-                if (TOKEN.matches(s)) {
-                    val rect = Rect()
-                    node.getBoundsInScreen(rect)
-                    if (rect.width() > 0 && rect.height() > 0) out.add(Pair(s, rect))
-                }
+            // Some chat apps expose the whole bubble as one node ("name, message, time")
+            // or put the message in contentDescription, so the token is searched for
+            // inside the text instead of requiring the node to be only the token.
+            val token = tokenFrom(node.text) ?: tokenFrom(node.contentDescription)
+            if (token != null) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.width() > 0 && rect.height() > 0) out.add(Pair(token, rect))
             }
         }
         for (i in 0 until node.childCount) {
@@ -156,7 +179,23 @@ class AutoDecryptService : AccessibilityService() {
         }
     }
 
+    /** Returns the Base64 ciphertext contained in [cs], or null. Wrapped lines are re-joined. */
+    private fun tokenFrom(cs: CharSequence?): String? {
+        if (cs == null || cs.length < MIN_LEN || cs.length > MAX_LEN) return null
+        val s = cs.toString().trim()
+        val joined = s.filterNot { it.isWhitespace() }
+        if (TOKEN.matches(joined)) return joined
+        val m = TOKEN_IN_TEXT.find(s) ?: return null
+        return m.value.takeIf { it.length <= MAX_LEN }
+    }
+
     private fun render(found: List<Pair<String, Rect>>) {
+        // Once the session key has expired nothing is shown any more, not even messages
+        // that were decrypted earlier and are still in the cache.
+        if (!SessionKeyStore.isActive()) {
+            clearOverlay()
+            return
+        }
         val toShow = ArrayList<Pair<Rect, String>>()
         for ((token, rect) in found) {
             val key = DecryptedMessageCache.keyOf(token)
@@ -172,8 +211,19 @@ class AutoDecryptService : AccessibilityService() {
             return
         }
         val container = ensureOverlay() ?: return
-        container.removeAllViews()
-        for ((rect, text) in toShow) container.addView(makeCard(rect, text))
+        // Reuse the existing card views (no remove/add churn) so scrolling stays smooth.
+        while (container.childCount > toShow.size) container.removeViewAt(container.childCount - 1)
+        for ((i, item) in toShow.withIndex()) {
+            val existing = container.getChildAt(i) as? TextView
+            if (existing == null) {
+                val tv = TextView(this)
+                bindCard(tv, item.first, item.second)
+                container.addView(tv)
+            } else {
+                bindCard(existing, item.first, item.second)
+            }
+        }
+        scheduleExpiryCheck()
     }
 
     private fun requestDecrypt(token: String, key: String) {
@@ -260,29 +310,51 @@ class AutoDecryptService : AccessibilityService() {
         return Pair(null, null)
     }
 
-    private fun makeCard(rect: Rect, text: String): TextView {
+    /**
+     * Outgoing bubbles sit on the "end" side of the screen (right in LTR, left in RTL),
+     * so the side with the smaller margin tells sent from received. Full-width bubbles
+     * are treated as received.
+     */
+    private fun isOutgoing(rect: Rect): Boolean {
+        val screenW = resources.displayMetrics.widthPixels
+        val marginLeft = rect.left
+        val marginRight = screenW - rect.right
+        val rtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        return if (rtl) marginLeft < marginRight else marginRight < marginLeft
+    }
+
+    private fun bindCard(tv: TextView, rect: Rect, text: String) {
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         val density = resources.displayMetrics.density
+        val outgoing = isOutgoing(rect)
+        // WhatsApp-like colours: sent = green, received = white (dark theme equivalents).
+        val fill = when {
+            outgoing && night -> "#005C4B"
+            outgoing -> "#D9FDD3"
+            night -> "#202C33"
+            else -> "#FFFFFF"
+        }
         val bg = GradientDrawable().apply {
             cornerRadius = 12f * density
-            setColor(if (night) Color.parseColor("#1F2C34") else Color.parseColor("#FFFFFF"))
+            setColor(Color.parseColor(fill))
             setStroke((1.5f * density).toInt().coerceAtLeast(1), Color.parseColor("#2E7D32"))
         }
-        return TextView(this).apply {
-            this.text = "\uD83D\uDD13 $text"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setTextColor(if (night) Color.parseColor("#E9EDEF") else Color.parseColor("#111B21"))
-            background = bg
-            val pad = (8f * density).toInt()
-            setPadding(pad, pad, pad, pad)
-            minHeight = rect.height()
-            layoutParams = FrameLayout.LayoutParams(rect.width(), FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.TOP or Gravity.LEFT
-                leftMargin = rect.left
-                topMargin = rect.top
-            }
-        }
+        tv.text = "\uD83D\uDD13 $text"
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        tv.setTextColor(if (night) Color.parseColor("#E9EDEF") else Color.parseColor("#111B21"))
+        tv.background = bg
+        val pad = (8f * density).toInt()
+        tv.setPadding(pad, pad, pad, pad)
+        tv.minHeight = rect.height()
+        val lp = (tv.layoutParams as? FrameLayout.LayoutParams)
+            ?: FrameLayout.LayoutParams(rect.width(), FrameLayout.LayoutParams.WRAP_CONTENT)
+        lp.width = rect.width()
+        lp.height = FrameLayout.LayoutParams.WRAP_CONTENT
+        lp.gravity = Gravity.TOP or Gravity.LEFT
+        lp.leftMargin = rect.left
+        lp.topMargin = rect.top
+        tv.layoutParams = lp
     }
 
     private fun ensureOverlay(): FrameLayout? {

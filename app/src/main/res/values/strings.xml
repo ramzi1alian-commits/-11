@@ -169,6 +169,11 @@
     <string name="identity_regenerated_notice">تعذّرت قراءة هويتك السابقة فأُنشئت هوية جديدة. أعد إقران جهات الاتصال.</string>
     <string name="auto_decrypt_service_label">فك التشفير التلقائي</string>
     <string name="auto_decrypt_service_description">يقرأ الرسائل المشفّرة الظاهرة في تطبيقات المحادثة المدعومة فقط، ويعرض نصها الأصلي فوقها دون أن تضغط على شيء. يعمل أثناء جلسة عبارة المرور النشطة. لا يرسل أي شيء خارج الجهاز، فالتطبيق بلا صلاحية الإنترنت.</string>
+    <string name="auto_decrypt_open_settings">تفعيل فك التشفير التلقائي</string>
+    <string name="auto_decrypt_state_service_on">الخدمة: مفعّلة ✓</string>
+    <string name="auto_decrypt_state_service_off">الخدمة: غير مفعّلة — اضغط الزر ثم فعّل «فك التشفير التلقائي» (في أندرويد 13+ قد تحتاج أولاً «السماح بالإعدادات المقيّدة» من معلومات التطبيق)</string>
+    <string name="auto_decrypt_state_session_on">مفتاح الجلسة: نشط ✓</string>
+    <string name="auto_decrypt_state_session_off">مفتاح الجلسة: غير نشط — فعّله من لوحة التشفير في الكيبورد</string>
     <string name="auto_decrypt_expired">⏳ انتهت صلاحية هذه الرسالة</string>
     <string name="auto_decrypt_replayed">هذه الرسالة فُتحت سابقاً ولم يعد نصها محفوظاً</string>
 </resources>

@@ -40,10 +40,22 @@ jobs:
         with:
           gradle-version: '8.4'
 
+      # This is a one-time, manually triggered bootstrap workflow. Lockfiles
+      # are resolved first; verification is disabled only for this bootstrap
+      # resolution because the trusted checksum metadata does not exist yet.
+      # Review the generated lockfiles and checksums before merging the artifact.
+      - name: Generate dependency lockfiles (bootstrap only)
+        run: |
+          gradle --no-daemon --stacktrace \
+            -Dorg.gradle.dependency.verification=off \
+            :app:dependencies --write-locks
+          gradle --no-daemon --stacktrace \
+            -Dorg.gradle.dependency.verification=off \
+            buildEnvironment --write-locks
+
       - name: Generate dependency verification metadata
         run: |
           gradle --no-daemon --stacktrace \
-            -Dorg.gradle.dependency.verification=strict \
             --write-verification-metadata sha256 \
             :app:dependencies
 

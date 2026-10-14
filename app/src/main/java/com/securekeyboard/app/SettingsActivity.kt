@@ -88,6 +88,14 @@ class SettingsActivity : AppCompatActivity() {
             startActivity(Intent(this, ThemeSettingsActivity::class.java))
         }
 
+        findViewById<android.view.View>(R.id.btnAutoDecrypt).setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {
+                Toast.makeText(this, R.string.auto_decrypt_open_settings, Toast.LENGTH_SHORT).show()
+            }
+        }
+
         findViewById<android.view.View>(R.id.btnAbout).setOnClickListener {
             startActivity(Intent(this, AboutActivity::class.java))
         }
@@ -129,8 +137,25 @@ class SettingsActivity : AppCompatActivity() {
         applyCurrentTheme()
     }
 
+    private fun isAutoDecryptEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        val cn = android.content.ComponentName(this, AutoDecryptService::class.java)
+        return enabled.split(':').any {
+            it.equals(cn.flattenToString(), ignoreCase = true) || it.equals(cn.flattenToShortString(), ignoreCase = true)
+        }
+    }
+
+    private fun refreshAutoDecryptStatus() {
+        SessionKeyStore.initialize(applicationContext)
+        val service = if (isAutoDecryptEnabled()) R.string.auto_decrypt_state_service_on else R.string.auto_decrypt_state_service_off
+        val session = if (SessionKeyStore.isActive()) R.string.auto_decrypt_state_session_on else R.string.auto_decrypt_state_session_off
+        findViewById<android.widget.TextView>(R.id.autoDecryptStatus).text = getString(service) + "\n" + getString(session)
+    }
+
     override fun onResume() {
         super.onResume()
+        refreshAutoDecryptStatus()
         // Re-apply (without a full recreate, to avoid a recreate/onResume
         // loop) in case the user changed the accent/font on the theme
         // screen and came back here - onCreate alone would miss that.
@@ -147,6 +172,7 @@ class SettingsActivity : AppCompatActivity() {
             this,
             findViewById(R.id.btnSwitch),
             findViewById(R.id.btnThemeSettings),
+            findViewById(R.id.btnAutoDecrypt),
             findViewById(R.id.btnClearLearned),
             findViewById(R.id.btnClearPhrases),
             findViewById(R.id.btnExportLearned),

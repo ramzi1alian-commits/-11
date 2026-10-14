@@ -94,11 +94,14 @@ After either option, commit/merge:
 
 ## CI enforcement
 
-`.github/workflows/v40-preaudit.yml` now runs Gradle with `--write-locks`
-disabled and `--locked` implied by the committed lockfiles + `strict`
-verification mode, so CI itself will fail (not silently pass) if:
-- the lockfiles are missing entirely, or
-- a resolved dependency doesn't match the committed lock/verification data.
+`.github/workflows/v40-preaudit.yml` checks for `gradle/verification-metadata.xml`
+and `app/gradle.lockfile` before building:
+- if both exist, Gradle runs with `-Dorg.gradle.dependency.verification=strict`,
+  so CI fails when a resolved dependency does not match the committed data;
+- if either is missing (the current state of this repository), the build still
+  runs but with verification OFF, and CI prints a visible warning annotation.
+  This is a known gap, not a pass: run the bootstrap workflow, review its output
+  line by line and commit it, after which CI becomes strict automatically.
 
 If CI starts failing after an intentional dependency version bump, re-run the
 two commands above locally, review the diff in

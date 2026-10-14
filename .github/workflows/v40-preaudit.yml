@@ -1,4 +1,4 @@
-name: SecureKeyboard V40 Pre-Audit
+name: SecureKeyboard V43 Pre-Audit
 
 on:
   push:
@@ -43,6 +43,19 @@ jobs:
         with:
           gradle-version: '8.4'
 
+      - name: Check supply-chain verification inputs
+        id: supply
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f gradle/verification-metadata.xml ] && [ -f app/gradle.lockfile ]; then
+            echo "Dependency verification inputs found: building with strict verification."
+            echo "flag=-Dorg.gradle.dependency.verification=strict" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Dependency verification OFF::gradle/verification-metadata.xml and/or app/gradle.lockfile are missing, so this build runs WITHOUT checksum verification. Run the dependency-verification-bootstrap workflow, review its output line by line and commit it; this workflow then switches to strict automatically."
+            echo "flag=-Dorg.gradle.dependency.verification=off" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Static security audits
         run: |
           chmod +x scripts/*.sh
@@ -52,13 +65,13 @@ jobs:
           ./scripts/v40_audit.sh
 
       - name: JVM unit tests
-        run: gradle --no-daemon --stacktrace -Dorg.gradle.dependency.verification=off :app:testDebugUnitTest
+        run: gradle --no-daemon --stacktrace ${{ steps.supply.outputs.flag }} :app:testDebugUnitTest
 
       - name: Assemble debug APK
-        run: gradle --no-daemon --stacktrace -Dorg.gradle.dependency.verification=off :app:assembleDebug
+        run: gradle --no-daemon --stacktrace ${{ steps.supply.outputs.flag }} :app:assembleDebug
 
       - name: Assemble release APK (unsigned is expected unless CI signing secrets are configured)
-        run: gradle --no-daemon --stacktrace -Dorg.gradle.dependency.verification=off :app:assembleRelease
+        run: gradle --no-daemon --stacktrace ${{ steps.supply.outputs.flag }} :app:assembleRelease
 
       - name: APK integrity report
         shell: bash
