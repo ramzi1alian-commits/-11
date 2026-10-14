@@ -1061,7 +1061,18 @@ class SecureInputMethodService : InputMethodService() {
         for (row in rows) {
             val rowLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (ch in row.split(" ")) {
-                rowLayout.addView(makeKey(ch, heightDp = heightDp) {
+                // Long-press ا -> أ إ آ and ي -> ى ئ, exactly like the main letter page.
+                // These forms were missing here because this page built plain keys.
+                val variants = if (isArabic) LETTER_VARIANTS[ch] else null
+                rowLayout.addView(makeKey(
+                    ch,
+                    heightDp = heightDp,
+                    variants = variants,
+                    onVariantChosen = { picked ->
+                        composeBuffer.append(picked)
+                        composePreviewView?.text = composeBuffer.toString()
+                    }
+                ) {
                     composeBuffer.append(ch)
                     composePreviewView?.text = composeBuffer.toString()
                 })
@@ -1735,6 +1746,10 @@ class SecureInputMethodService : InputMethodService() {
         // sp size, so icon keys get a slightly larger size by default -
         // purely cosmetic, doesn't change hit target/layout weight.
         isIconGlyph: Boolean = false,
+        // Where a letter picked from the long-press popup goes. Null = the normal
+        // field (commitLetter). Secure-compose passes its own handler so the picked
+        // letter lands in the compose buffer instead of the app behind the keyboard.
+        onVariantChosen: ((String) -> Unit)? = null,
         onClick: (() -> Unit)? = null
     ): TextView {
         return TextView(this).apply {
@@ -1868,7 +1883,7 @@ class SecureInputMethodService : InputMethodService() {
                                 // to change it before lifting, exactly
                                 // like Gboard's accent popups).
                                 val chosen = variants?.getOrElse(selectedVariantIndex) { label } ?: label
-                                commitLetter(chosen)
+                                if (onVariantChosen != null) onVariantChosen(chosen) else commitLetter(chosen)
                                 pw.dismiss()
                                 popup = null
                                 popupContent = null

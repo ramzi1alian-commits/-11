@@ -36,6 +36,12 @@ import java.util.concurrent.RejectedExecutionException
  *  - Never reads password fields; ignores everything that is not a whole-node Base64 token.
  *  - Never stores or logs screen content other than decrypted messages (encrypted cache).
  *  - Works only while the session passphrase is active (the 30-minute keyboard session).
+ *  - Battery: only RECENT messages are decrypted. When a chat is opened (or the key is set)
+ *    only the newest [RECENT_AT_OPEN] ciphertexts on screen are decrypted, plus any message
+ *    that then arrives below the ones already seen. Older history, and messages revealed by
+ *    scrolling up, are NOT decrypted (a cheap cache lookup still shows ones already opened with
+ *    this key). A message that failed is not retried during the session, and scans slow down
+ *    when no ciphertext is on screen.
  *  - Everything shown is bound to the passphrase that is active RIGHT NOW (see
  *    [DecryptedMessageCache.fingerprintOf]). When the key changes, earlier plaintexts
  *    disappear, and every failure/notice remembered for the old key is forgotten so
@@ -67,7 +73,13 @@ class AutoDecryptService : AccessibilityService() {
         private const val MAX_TOKENS_PER_PASS = 40
         private const val MIN_REFRESH_INTERVAL_MS = 30L
         private const val EXPIRY_CHECK_MS = 2_000L
-        private const val FAILURE_RETRY_MS = 5 * 60 * 1000L
+        // A wrong-key failure would fail the same way again (and each try costs a full Argon2id),
+        // so it is not retried for the length of a session.
+        private const val FAILURE_RETRY_MS = 30 * 60 * 1000L
+        // Only this many ciphertexts (the newest on screen) are decrypted when a chat is opened.
+        private const val RECENT_AT_OPEN = 3
+        // Scan interval while no ciphertext is on screen (cards on screen use the short one).
+        private const val IDLE_REFRESH_INTERVAL_MS = 300L
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -91,6 +103,14 @@ class AutoDecryptService : AccessibilityService() {
     private val retryAfter = HashMap<String, Long>()      // id -> do not retry before
     private val notices = HashMap<String, String>()       // id -> "expired" / "already opened" / "bad text"
     private val failures = HashMap<String, String>()      // id -> "wrong key" (retried later)
+    // Recency policy (see class doc): which ciphertexts were already classified, which of them
+    // may be decrypted, and which only had a cache lookup.
+    private val seen = HashSet<String>()
+    private val eligible = HashSet<String>()
+    private val cacheChecked = HashSet<String>()
+    // True when the next new ciphertexts on screen count as "a chat was just opened".
+    private var allowOpenBatch = true
+    private var lastHadTokens = false
 
     private var scanQueued = false
     private var scanRunning = false
@@ -136,6 +156,10 @@ class AutoDecryptService : AccessibilityService() {
         retryAfter.clear()
         notices.clear()
         failures.clear()
+        seen.clear()
+        eligible.clear()
+        cacheChecked.clear()
+        allowOpenBatch = true
     }
 
     override fun onServiceConnected() {
@@ -150,6 +174,8 @@ class AutoDecryptService : AccessibilityService() {
         if (event == null) return
         // Our own windows (keyboard, this overlay) must never trigger work: no feedback loop.
         if (event.packageName?.toString() == packageName) return
+        // A new screen/activity (e.g. a chat was opened): its newest messages are "recent".
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) allowOpenBatch = true
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
         ) {
@@ -195,7 +221,8 @@ class AutoDecryptService : AccessibilityService() {
         if (scanQueued) return
         scanQueued = true
         // Short throttle (not a long debounce) so the cards follow the bubbles while scrolling.
-        val wait = (MIN_REFRESH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastRefreshAt)).coerceAtLeast(0L)
+        val interval = if (lastHadTokens || (overlay?.childCount ?: 0) > 0) MIN_REFRESH_INTERVAL_MS else IDLE_REFRESH_INTERVAL_MS
+        val wait = (interval - (SystemClock.uptimeMillis() - lastRefreshAt)).coerceAtLeast(0L)
         main.postDelayed(scanRunnable, wait)
     }
 
@@ -251,6 +278,9 @@ class AutoDecryptService : AccessibilityService() {
             clearOverlay()
             return
         }
+        lastHadTokens = result.items.isNotEmpty()
+        // A screen without any ciphertext (chat list, other app): the next ones are a fresh opening.
+        if (!lastHadTokens) allowOpenBatch = true
         if (fp == null) {
             // No active key (expired, cleared or never chosen): drop all plaintext and tell the user.
             wipeState()
@@ -305,7 +335,64 @@ class AutoDecryptService : AccessibilityService() {
         return m.value.takeIf { it.length <= MAX_LEN }
     }
 
+    /**
+     * Recency policy. Called for every scan result while a key is active. A ciphertext is
+     * decrypted only if, the first time it is seen, it is
+     *  - among the newest [RECENT_AT_OPEN] on screen right after a chat was opened / the key set, or
+     *  - BELOW every ciphertext already seen (a message that just arrived).
+     * Everything else (old history, or older messages revealed by scrolling up) is remembered as
+     * seen-but-not-eligible and never decrypted automatically.
+     */
+    private fun classifyNew(items: List<ScanItem>) {
+        var anyKnown = false
+        var maxKnownBottom = Int.MIN_VALUE
+        val unseen = ArrayList<ScanItem>()
+        for (item in items) {
+            if (seen.contains(item.id)) {
+                anyKnown = true
+                if (item.rect.bottom > maxKnownBottom) maxKnownBottom = item.rect.bottom
+            } else {
+                unseen.add(item)
+            }
+        }
+        if (unseen.isEmpty()) return
+        if (anyKnown) {
+            for (u in unseen) if (u.rect.bottom > maxKnownBottom) eligible.add(u.id)
+        } else if (allowOpenBatch) {
+            allowOpenBatch = false
+            for (u in unseen.sortedByDescending { it.rect.bottom }.take(RECENT_AT_OPEN)) eligible.add(u.id)
+        }
+        for (u in unseen) seen.add(u.id)
+    }
+
+    /** Cheap, no key derivation: shows a message that was already opened with this key. */
+    private fun requestCacheLookup(item: ScanItem, fp: String) {
+        val id = item.id
+        if (!cacheChecked.add(id)) return
+        val token = item.token
+        try {
+            decryptor.execute {
+                val text = try {
+                    DecryptedMessageCache.get(applicationContext, token, fp)
+                } catch (_: Exception) {
+                    null
+                }
+                if (text != null) {
+                    main.post {
+                        if (currentFp == fp) {
+                            memo[id] = text
+                            scheduleRefresh()
+                        }
+                    }
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            cacheChecked.remove(id)
+        }
+    }
+
     private fun render(items: List<ScanItem>, fp: String?, scrolledSinceScan: Int) {
+        if (fp != null) classifyNew(items)
         val toShow = ArrayList<Pair<Rect, String>>()
         for (item in items) {
             if (fp == null) {
@@ -314,7 +401,9 @@ class AutoDecryptService : AccessibilityService() {
             }
             val done = memo[item.id] ?: notices[item.id]
             // Messages that failed are re-tried later (rate-limited), without hiding the status card.
-            if (done == null) requestDecrypt(item, fp)
+            if (done == null) {
+                if (eligible.contains(item.id)) requestDecrypt(item, fp) else requestCacheLookup(item, fp)
+            }
             // Always show SOMETHING: result, status, or "decrypting..." while Argon2 is running.
             val text = done ?: failures[item.id]
                 ?: (if (pending.contains(item.id)) getString(R.string.auto_decrypt_working) else null)
@@ -453,14 +542,17 @@ class AutoDecryptService : AccessibilityService() {
         }
         if (expired) return Pair(null, getString(R.string.auto_decrypt_expired))
         if (replayed) return Pair(null, getString(R.string.auto_decrypt_replayed))
-        if (version in 2..3) {
-            try {
-                return Pair(CryptoEngine.decrypt(token, pass), null)
-            } catch (_: CryptoEngine.ExpiredMessageException) {
-                return Pair(null, getString(R.string.auto_decrypt_expired))
-            } catch (_: Exception) {
-                // Not a passphrase-only message either.
-            }
+        // Passphrase-only messages: legacy v2/v3 AND the current compact v7 format. This used
+        // to be gated to versions 2..3, so every NEW passphrase-only message (v7) was never
+        // tried and always showed "cannot decrypt". The keyboard's own decrypt has no such
+        // gate; mirror it. Contact messages (v6) are already handled above, and
+        // CryptoEngine.decrypt rejects an unsupported version before any costly key derivation.
+        try {
+            return Pair(CryptoEngine.decrypt(token, pass), null)
+        } catch (_: CryptoEngine.ExpiredMessageException) {
+            return Pair(null, getString(R.string.auto_decrypt_expired))
+        } catch (_: Exception) {
+            // Not a passphrase-only message either.
         }
         return Pair(null, null)
     }
