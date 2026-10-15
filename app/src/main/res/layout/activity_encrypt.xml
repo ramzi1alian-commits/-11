@@ -35,7 +35,7 @@
             android:layout_marginBottom="16dp"
             android:padding="12dp"
             android:background="@drawable/bg_warning"
-            android:textColor="@color/danger_red"
+            android:textColor="?attr/skDanger"
             android:textSize="12sp"
             android:lineSpacingExtra="3dp"
             android:visibility="gone" />
@@ -236,7 +236,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:textColor="@color/danger_red"
+            android:textColor="?attr/skDanger"
             android:textSize="13sp"
             android:visibility="gone" />
 

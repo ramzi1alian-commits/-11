@@ -494,7 +494,7 @@ class EncryptActivity : AppCompatActivity() {
         }
         keyStrengthHint.setTextColor(
             if (ok) ThemeUtil.accentColor(this)
-            else resources.getColor(R.color.danger_red, theme)
+            else ThemeUtil.dangerColor(this)
         )
     }
 

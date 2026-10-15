@@ -361,9 +361,42 @@ object ThemeUtil {
         return context.createConfigurationContext(forced)
     }
 
-    fun accentColor(context: Context): Int =
-        if (Prefs.accentIsAuto(context)) Prefs.palette(context).accent
+    /**
+     * The accent is used both as a fill and as text/stroke color on the theme
+     * background. A custom accent picked in settings can be unreadable on some
+     * themes (e.g. gold on a light theme), so it is nudged toward white (dark
+     * themes) or black (light themes) until it reaches a readable contrast.
+     */
+    fun accentColor(context: Context): Int {
+        val p = Prefs.palette(context)
+        val raw = if (Prefs.accentIsAuto(context)) p.accent
         else ContextCompat.getColor(themedContext(context), Prefs.accentColorRes(context))
+        return ensureContrast(raw, p.bg, 4.5)
+    }
+
+    fun dangerColor(context: Context): Int =
+        if (Prefs.palette(context).dark) 0xFFF87171.toInt() else 0xFFC62828.toInt()
+
+    private fun luminance(c: Int): Double {
+        fun f(v: Int): Double { val x = v / 255.0; return if (x <= 0.03928) x / 12.92 else Math.pow((x + 0.055) / 1.055, 2.4) }
+        return 0.2126 * f(android.graphics.Color.red(c)) + 0.7152 * f(android.graphics.Color.green(c)) + 0.0722 * f(android.graphics.Color.blue(c))
+    }
+
+    private fun contrast(a: Int, b: Int): Double {
+        val la = luminance(a); val lb = luminance(b)
+        return (maxOf(la, lb) + 0.05) / (minOf(la, lb) + 0.05)
+    }
+
+    fun ensureContrast(color: Int, bg: Int, min: Double): Int {
+        if (contrast(color, bg) >= min) return color
+        val target = if (luminance(bg) < 0.5) android.graphics.Color.WHITE else android.graphics.Color.BLACK
+        var c = color
+        for (i in 1..20) {
+            c = androidx.core.graphics.ColorUtils.blendARGB(color, target, i * 0.05f)
+            if (contrast(c, bg) >= min) return c
+        }
+        return c
+    }
 
     fun textColor(context: Context): Int = Prefs.palette(context).text
 

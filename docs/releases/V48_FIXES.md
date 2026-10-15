@@ -19,3 +19,14 @@ Not compiled here (no Android SDK in the authoring environment): build in CI / A
 - Every screen: FLAG_SECURE and filterTouchesWhenObscured (tapjacking) applied centrally in SecurityApplication.
 - Auto-decrypt accessibility service is restricted to the supported chat apps by the OS itself (android:packageNames), not only in code.
 - Unchanged and still in place: no INTERNET permission, backups disabled, no exported crypto screens, signature/debugger/root checks, R8 obfuscation in release.
+
+## Paperclip (📎) fix
+- AttachmentPickerActivity now does the whole job itself (contact chooser if none selected -> file picker -> encrypt with the contact's public key -> system share sheet), so it no longer depends on the keyboard surviving while the picker is open. No session key needed.
+- Removed the "جاهز — اختر ملفًا..." status line from the compose page.
+
+## Theme contrast
+- Checked every theme's text/secondary/accent against its background and surfaces; darkened day/light/ocean/sunset secondary text and accents.
+- Accent color (auto or user-picked) is automatically nudged to a readable contrast (>= 4.5:1) on the active theme; error red now has a light and dark variant.
+
+## Notices inside the keyboard (Android 12-14)
+- "جارٍ التشفير / فك التشفير ..." and the other crypto messages were Toasts; IME toasts are suppressed or hidden under the keyboard on newer Android. They are now drawn as a notice strip inside the keyboard (crypto page and secure-compose page), kept ~4.5 s and re-applied if the keyboard view is rebuilt. A Toast is only the fallback when no keyboard page is showing.

@@ -352,6 +352,58 @@ class SecureInputMethodService : InputMethodService() {
     // document picker and the IME; this view gives the user a stable status.
     private var cryptoStatusView: TextView? = null
 
+    // ---- In-keyboard notices -------------------------------------------------
+    // Toasts shown from an IME are unreliable on newer Android (12-14): they can
+    // be suppressed or drawn under the keyboard window, so "جارٍ التشفير…" and
+    // similar messages never became visible. Notices are drawn inside the
+    // keyboard itself instead (a strip above the keys), and survive the view
+    // being rebuilt for a few seconds.
+    private var noticeText: CharSequence? = null
+    private var noticeUntil = 0L
+    private val hideNoticeRunnable = Runnable {
+        noticeText = null
+        cryptoStatusView?.visibility = View.GONE
+    }
+
+    private fun showCryptoNotice(resId: Int) = showCryptoNotice(getString(resId))
+
+    private fun showCryptoNotice(msg: CharSequence) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            mainHandler.post { showCryptoNotice(msg) }
+            return
+        }
+        noticeText = msg
+        noticeUntil = android.os.SystemClock.uptimeMillis() + 4500L
+        mainHandler.removeCallbacks(hideNoticeRunnable)
+        val v = cryptoStatusView
+        if (v == null) {
+            // No keyboard page is showing right now - fall back to a toast.
+            android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        applyNotice(v)
+        mainHandler.postDelayed(hideNoticeRunnable, 4500L)
+    }
+
+    /** Styles [v] as the notice strip and fills it with the current notice (if still fresh). */
+    private fun applyNotice(v: TextView) {
+        v.setTextColor(ThemeUtil.accentColor(this))
+        v.textSize = 13f
+        v.gravity = Gravity.CENTER
+        v.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        v.textDirection = View.TEXT_DIRECTION_RTL
+        v.setPadding(dpToPx(8f), dpToPx(6f), dpToPx(8f), dpToPx(6f))
+        v.background = ThemeUtil.suggestionBarBackground(this)
+        val t = noticeText
+        if (t != null && android.os.SystemClock.uptimeMillis() < noticeUntil) {
+            v.text = t
+            v.visibility = View.VISIBLE
+        } else {
+            v.text = ""
+            v.visibility = View.GONE
+        }
+    }
+
     // Single Handler for every key's long-press/repeat timers. Each
     // posted Runnable is stored on that key's own local variables (see
     // makeKey) and removed by reference (never by clearing everything),
@@ -561,7 +613,7 @@ class SecureInputMethodService : InputMethodService() {
         val clip = cm?.primaryClip
         val clipText = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).text?.toString() else null
         if (clipText.isNullOrEmpty()) {
-            android.widget.Toast.makeText(this, "الحافظة فارغة", android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice("الحافظة فارغة")
             return
         }
         composeBuffer.append(clipText)
@@ -781,6 +833,10 @@ class SecureInputMethodService : InputMethodService() {
             textDirection = View.TEXT_DIRECTION_RTL
         }
         root.addView(statusView)
+        val noticeView = TextView(this)
+        applyNotice(noticeView)
+        cryptoStatusView = noticeView
+        root.addView(noticeView)
 
         val sessionActive = SessionKeyStore.isActive()
 
@@ -1064,14 +1120,8 @@ class SecureInputMethodService : InputMethodService() {
         })
         root.addView(actionRow)
 
-        val operationStatus = TextView(this).apply {
-            text = "جاهز — اختر ملفًا ثم اضغط 🔐 للتشفير"
-            setTextColor(ThemeUtil.textSecondaryColor(this@SecureInputMethodService))
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setPadding(dpToPx(4f), dpToPx(3f), dpToPx(4f), dpToPx(3f))
-            visibility = if (cryptoBusy) View.VISIBLE else View.VISIBLE
-        }
+        val operationStatus = TextView(this)
+        applyNotice(operationStatus)
         cryptoStatusView = operationStatus
         root.addView(operationStatus)
 
@@ -1184,6 +1234,7 @@ class SecureInputMethodService : InputMethodService() {
         // AttachmentPickerActivity is in the foreground.
         Prefs.markReturnToSecureCompose(this)
         val intent = Intent(this, AttachmentPickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        selectedSecureContact?.let { intent.putExtra(AttachmentPickerActivity.EXTRA_CONTACT, it) }
         startActivity(intent)
     }
 
@@ -1195,23 +1246,23 @@ class SecureInputMethodService : InputMethodService() {
         val input = selectedAttachmentUri ?: return
         val contactName = selectedSecureContact
         if (contactName.isNullOrBlank()) {
-            android.widget.Toast.makeText(this, "اختر جهة اتصال آمنة أولاً", android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice("اختر جهة اتصال آمنة أولاً")
             return
         }
         val keyB64 = ContactStore.getPairedContact(this, contactName)
         if (keyB64.isNullOrBlank()) {
-            android.widget.Toast.makeText(this, "مفتاح جهة الاتصال غير موجود", android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice("مفتاح جهة الاتصال غير موجود")
             return
         }
         val publicKey = try { DeviceIdentity.parseContactPublicKey(keyB64) } catch (e: Exception) {
-            android.widget.Toast.makeText(this, "مفتاح جهة الاتصال غير صالح", android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice("مفتاح جهة الاتصال غير صالح")
             return
         }
         val mime = selectedAttachmentMime
         val displayName = selectedAttachmentName.ifBlank { "file" }
         cryptoBusy = true
         cryptoStatusView?.text = "جارٍ تشفير الملف وإرفاقه…"
-        android.widget.Toast.makeText(this, "جارٍ تشفير الملف وإرفاقه…", android.widget.Toast.LENGTH_SHORT).show()
+        showCryptoNotice("جارٍ تشفير الملف وإرفاقه…")
         cryptoExecutor.execute {
             var outFile: java.io.File? = null
             try {
@@ -1224,7 +1275,7 @@ class SecureInputMethodService : InputMethodService() {
                     cryptoStatusView?.text = "✓ تم تشفير الملف — جارٍ إرفاق النسخة المشفّرة…"
                     val ic = currentInputConnection
                     if (ic == null || android.os.Build.VERSION.SDK_INT < 25) {
-                        android.widget.Toast.makeText(this, "هذا التطبيق لا يدعم إرفاق الملفات من لوحة المفاتيح على هذا النظام", android.widget.Toast.LENGTH_LONG).show()
+                        showCryptoNotice("هذا التطبيق لا يدعم إرفاق الملفات من لوحة المفاتيح على هذا النظام")
                         return@post
                     }
                     try {
@@ -1244,13 +1295,13 @@ class SecureInputMethodService : InputMethodService() {
                             shareEncryptedAttachment(outFile!!, displayName)
                         } else {
                             cryptoStatusView?.text = "✓ تم إدراج الملف المشفّر — اضغط إرسال في واتساب لإرساله"
-                            android.widget.Toast.makeText(this, "تم إدراج الملف المشفّر في المحادثة — اضغط إرسال في واتساب لإرساله، والأصل محفوظ", android.widget.Toast.LENGTH_LONG).show()
+                            showCryptoNotice("تم إدراج الملف المشفّر في المحادثة — اضغط إرسال في واتساب لإرساله، والأصل محفوظ")
                             selectedAttachmentUri = null
                             selectedAttachmentName = ""
                             rebuildKeyboardView()
                         }
                     } catch (e: Exception) {
-                        android.widget.Toast.makeText(this, "تعذر إرفاق الملف المشفّر: ${e.message ?: "خطأ"}", android.widget.Toast.LENGTH_LONG).show()
+                        showCryptoNotice("تعذر إرفاق الملف المشفّر: ${e.message ?: "خطأ"}")
                     }
                 }
             } catch (e: Exception) {
@@ -1258,7 +1309,7 @@ class SecureInputMethodService : InputMethodService() {
                 mainHandler.post {
                     cryptoBusy = false
                     cryptoStatusView?.text = "فشل تشفير الملف — ${e.message ?: "خطأ غير معروف"}"
-                    android.widget.Toast.makeText(this, "فشل تشفير الملف: ${e.message ?: "خطأ غير معروف"}", android.widget.Toast.LENGTH_LONG).show()
+                    showCryptoNotice("فشل تشفير الملف: ${e.message ?: "خطأ غير معروف"}")
                 }
             }
         }
@@ -1276,26 +1327,26 @@ class SecureInputMethodService : InputMethodService() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(Intent.createChooser(share, "اختر التطبيق لإرسال الملف المشفّر").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            android.widget.Toast.makeText(this, "اختر واتساب من المشاركة ثم اضغط إرسال. الملف الأصلي محفوظ.", android.widget.Toast.LENGTH_LONG).show()
+            showCryptoNotice("اختر واتساب من المشاركة ثم اضغط إرسال. الملف الأصلي محفوظ.")
         } catch (e: Exception) {
-            android.widget.Toast.makeText(this, "تعذر فتح مشاركة الملف المشفّر: ${e.message ?: "خطأ"}", android.widget.Toast.LENGTH_LONG).show()
+            showCryptoNotice("تعذر فتح مشاركة الملف المشفّر: ${e.message ?: "خطأ"}")
         }
     }
 
     private fun sendSecureCompose() {
         if (composeBuffer.isEmpty()) {
-            android.widget.Toast.makeText(this, R.string.crypto_panel_empty_field_toast, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_empty_field_toast)
             return
         }
         if (cryptoBusy) return
         val passphrase = SessionKeyStore.get()
         if (passphrase == null) {
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_session, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_no_session)
             return
         }
         val textChars = composeBuffer.toString().toCharArray()
         cryptoBusy = true
-        android.widget.Toast.makeText(this, R.string.crypto_panel_encrypting_toast, android.widget.Toast.LENGTH_SHORT).show()
+        showCryptoNotice(R.string.crypto_panel_encrypting_toast)
         cryptoExecutor.execute {
             var cipherText: String? = null
             try {
@@ -1325,7 +1376,7 @@ class SecureInputMethodService : InputMethodService() {
                 composeBuffer.setLength(0)
                 currentWord.clear()
                 lastFinishedWord = null
-                android.widget.Toast.makeText(this, R.string.crypto_panel_sent_toast, android.widget.Toast.LENGTH_SHORT).show()
+                showCryptoNotice(R.string.crypto_panel_sent_toast)
                 rebuildKeyboardView()
             }
         }
@@ -1344,7 +1395,7 @@ class SecureInputMethodService : InputMethodService() {
         if (cryptoBusy) return
         val passphrase = SessionKeyStore.get()
         if (passphrase == null) {
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_session, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_no_session)
             return
         }
         val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
@@ -1352,11 +1403,11 @@ class SecureInputMethodService : InputMethodService() {
         val clipText = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).text?.toString() else null
         if (clipText.isNullOrBlank()) {
             java.util.Arrays.fill(passphrase, ' ')
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_ciphertext_toast, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_no_ciphertext_toast)
             return
         }
         cryptoBusy = true
-        android.widget.Toast.makeText(this, R.string.crypto_panel_decrypting_toast, android.widget.Toast.LENGTH_SHORT).show()
+        showCryptoNotice(R.string.crypto_panel_decrypting_toast)
         cryptoExecutor.execute {
             var resultText: String? = null
             var expired = false
@@ -1394,9 +1445,9 @@ class SecureInputMethodService : InputMethodService() {
                         cryptoDecryptedText = resultText
                         rebuildKeyboardView()
                     }
-                    expired -> android.widget.Toast.makeText(this, R.string.crypto_panel_expired_toast, android.widget.Toast.LENGTH_SHORT).show()
-                    replayed -> android.widget.Toast.makeText(this, R.string.crypto_panel_replayed_toast, android.widget.Toast.LENGTH_SHORT).show()
-                    else -> android.widget.Toast.makeText(this, R.string.crypto_panel_decrypt_failed_toast, android.widget.Toast.LENGTH_SHORT).show()
+                    expired -> showCryptoNotice(R.string.crypto_panel_expired_toast)
+                    replayed -> showCryptoNotice(R.string.crypto_panel_replayed_toast)
+                    else -> showCryptoNotice(R.string.crypto_panel_decrypt_failed_toast)
                 }
             }
         }
@@ -1416,7 +1467,7 @@ class SecureInputMethodService : InputMethodService() {
         if (cryptoBusy) return
         val passphrase = SessionKeyStore.get()
         if (passphrase == null) {
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_session, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_no_session)
             return
         }
         val ic = currentInputConnection
@@ -1428,12 +1479,12 @@ class SecureInputMethodService : InputMethodService() {
         val fullText = extracted?.text?.toString().orEmpty()
         if (fullText.isEmpty()) {
             java.util.Arrays.fill(passphrase, ' ')
-            android.widget.Toast.makeText(this, R.string.crypto_panel_empty_field_toast, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_empty_field_toast)
             return
         }
         val textChars = fullText.toCharArray()
         cryptoBusy = true
-        android.widget.Toast.makeText(this, R.string.crypto_panel_encrypting_toast, android.widget.Toast.LENGTH_SHORT).show()
+        showCryptoNotice(R.string.crypto_panel_encrypting_toast)
         cryptoExecutor.execute {
             var cipherText: String? = null
             try {
@@ -1488,7 +1539,7 @@ class SecureInputMethodService : InputMethodService() {
         SessionKeyStore.initialize(this)
         val passphrase = SessionKeyStore.get()
         if (passphrase == null) {
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_session, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_no_session)
             return
         }
         val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
@@ -1500,11 +1551,11 @@ class SecureInputMethodService : InputMethodService() {
         } catch (_: Exception) { null }
         if (clipText.isNullOrBlank()) {
             java.util.Arrays.fill(passphrase, ' ')
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_ciphertext_toast, android.widget.Toast.LENGTH_SHORT).show()
+            showCryptoNotice(R.string.crypto_panel_no_ciphertext_toast)
             return
         }
         cryptoBusy = true
-        android.widget.Toast.makeText(this, R.string.crypto_panel_decrypting_toast, android.widget.Toast.LENGTH_SHORT).show()
+        showCryptoNotice(R.string.crypto_panel_decrypting_toast)
         cryptoExecutor.execute {
             var resultText: String? = null
             var expired = false
@@ -1563,9 +1614,9 @@ class SecureInputMethodService : InputMethodService() {
                 cryptoBusy = false
                 when {
                     resultText != null -> showDecryptedResultPopup(resultText!!)
-                    expired -> android.widget.Toast.makeText(this, R.string.crypto_panel_expired_toast, android.widget.Toast.LENGTH_SHORT).show()
-                    replayed -> android.widget.Toast.makeText(this, R.string.crypto_panel_replayed_toast, android.widget.Toast.LENGTH_SHORT).show()
-                    else -> android.widget.Toast.makeText(this, R.string.crypto_panel_decrypt_failed_toast, android.widget.Toast.LENGTH_SHORT).show()
+                    expired -> showCryptoNotice(R.string.crypto_panel_expired_toast)
+                    replayed -> showCryptoNotice(R.string.crypto_panel_replayed_toast)
+                    else -> showCryptoNotice(R.string.crypto_panel_decrypt_failed_toast)
                 }
             }
         }

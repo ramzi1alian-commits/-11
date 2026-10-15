@@ -6,6 +6,7 @@
         <item name="skBorder">#CBD5E1</item>
         <item name="skTextSecondary">#64748B</item>
         <item name="skText">#0F172A</item>
+        <item name="skDanger">#C62828</item>
         <item name="android:windowNoTitle">true</item>
         <item name="colorPrimary">@color/navy_900</item>
         <item name="colorPrimaryDark">@color/navy_950</item>
@@ -25,6 +26,7 @@
         <item name="skBorder">#CBD5E1</item>
         <item name="skTextSecondary">#64748B</item>
         <item name="skText">#0F172A</item>
+        <item name="skDanger">#C62828</item>
         <item name="android:windowNoTitle">true</item>
         <item name="colorPrimary">@color/navy_900</item>
         <item name="colorPrimaryDark">@color/navy_950</item>
@@ -112,20 +114,21 @@
         <item name="skSurface">#FFFFFF</item>
         <item name="skSurface2">#EEF2F7</item>
         <item name="skBorder">#CBD5E1</item>
-        <item name="skTextSecondary">#64748B</item>
+        <item name="skTextSecondary">#566275</item>
         <item name="skText">#0F172A</item>
         <item name="android:windowBackground">#F4F7FB</item>
         <item name="android:colorBackground">#F4F7FB</item>
         <item name="android:textColorPrimary">#0F172A</item>
-        <item name="android:textColorSecondary">#64748B</item>
+        <item name="android:textColorSecondary">#566275</item>
         <item name="colorSurface">#FFFFFF</item>
         <item name="colorOnSurface">#0F172A</item>
         <item name="colorPrimary">#FFFFFF</item>
-        <item name="colorAccent">#0891B2</item>
+        <item name="colorAccent">#0E7490</item>
         <item name="android:statusBarColor">#F4F7FB</item>
         <item name="android:navigationBarColor">#F4F7FB</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <item name="skDanger">#C62828</item>
     </style>
 
     <style name="SkTheme.Night" parent="">
@@ -147,6 +150,7 @@
         <item name="android:navigationBarColor">#0B1020</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="skDanger">#F87171</item>
     </style>
 
     <style name="SkTheme.Dark" parent="">
@@ -168,6 +172,7 @@
         <item name="android:navigationBarColor">#000000</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="skDanger">#F87171</item>
     </style>
 
     <style name="SkTheme.Light" parent="">
@@ -175,12 +180,12 @@
         <item name="skSurface">#F8F8F8</item>
         <item name="skSurface2">#F0F0F0</item>
         <item name="skBorder">#DADADA</item>
-        <item name="skTextSecondary">#6B7280</item>
+        <item name="skTextSecondary">#5B6472</item>
         <item name="skText">#111111</item>
         <item name="android:windowBackground">#FFFFFF</item>
         <item name="android:colorBackground">#FFFFFF</item>
         <item name="android:textColorPrimary">#111111</item>
-        <item name="android:textColorSecondary">#6B7280</item>
+        <item name="android:textColorSecondary">#5B6472</item>
         <item name="colorSurface">#F8F8F8</item>
         <item name="colorOnSurface">#111111</item>
         <item name="colorPrimary">#F8F8F8</item>
@@ -189,6 +194,7 @@
         <item name="android:navigationBarColor">#FFFFFF</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <item name="skDanger">#C62828</item>
     </style>
 
     <style name="SkTheme.Gold" parent="">
@@ -210,6 +216,7 @@
         <item name="android:navigationBarColor">#0F0B04</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="skDanger">#F87171</item>
     </style>
 
     <style name="SkTheme.Gray" parent="">
@@ -231,6 +238,7 @@
         <item name="android:navigationBarColor">#2B2E33</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="skDanger">#F87171</item>
     </style>
 
     <style name="SkTheme.Emerald" parent="">
@@ -252,6 +260,7 @@
         <item name="android:navigationBarColor">#06140F</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="skDanger">#F87171</item>
     </style>
 
     <style name="SkTheme.Ocean" parent="">
@@ -259,20 +268,21 @@
         <item name="skSurface">#FFFFFF</item>
         <item name="skSurface2">#D7EEF5</item>
         <item name="skBorder">#A5D4E2</item>
-        <item name="skTextSecondary">#3E6B7B</item>
+        <item name="skTextSecondary">#356070</item>
         <item name="skText">#0A2A36</item>
         <item name="android:windowBackground">#E8F6FA</item>
         <item name="android:colorBackground">#E8F6FA</item>
         <item name="android:textColorPrimary">#0A2A36</item>
-        <item name="android:textColorSecondary">#3E6B7B</item>
+        <item name="android:textColorSecondary">#356070</item>
         <item name="colorSurface">#FFFFFF</item>
         <item name="colorOnSurface">#0A2A36</item>
         <item name="colorPrimary">#FFFFFF</item>
-        <item name="colorAccent">#0E7490</item>
+        <item name="colorAccent">#0B6682</item>
         <item name="android:statusBarColor">#E8F6FA</item>
         <item name="android:navigationBarColor">#E8F6FA</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <item name="skDanger">#C62828</item>
     </style>
 
     <style name="SkTheme.Royal" parent="">
@@ -294,6 +304,7 @@
         <item name="android:navigationBarColor">#140B24</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="skDanger">#F87171</item>
     </style>
 
     <style name="SkTheme.Sunset" parent="">
@@ -301,19 +312,20 @@
         <item name="skSurface">#FFFFFF</item>
         <item name="skSurface2">#FFE6D2</item>
         <item name="skBorder">#F2C5A0</item>
-        <item name="skTextSecondary">#8A5A3C</item>
+        <item name="skTextSecondary">#7A4A2E</item>
         <item name="skText">#3B1D0E</item>
         <item name="android:windowBackground">#FFF4EA</item>
         <item name="android:colorBackground">#FFF4EA</item>
         <item name="android:textColorPrimary">#3B1D0E</item>
-        <item name="android:textColorSecondary">#8A5A3C</item>
+        <item name="android:textColorSecondary">#7A4A2E</item>
         <item name="colorSurface">#FFFFFF</item>
         <item name="colorOnSurface">#3B1D0E</item>
         <item name="colorPrimary">#FFFFFF</item>
-        <item name="colorAccent">#E8590C</item>
+        <item name="colorAccent">#C2410C</item>
         <item name="android:statusBarColor">#FFF4EA</item>
         <item name="android:navigationBarColor">#FFF4EA</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
+        <item name="skDanger">#C62828</item>
     </style>
 </resources>
