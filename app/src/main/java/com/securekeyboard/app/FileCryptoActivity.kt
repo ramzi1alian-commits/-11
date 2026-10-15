@@ -15,6 +15,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
+import com.google.android.material.button.MaterialButton
 import java.io.File
 import java.io.FileInputStream
 import java.util.Arrays
@@ -35,11 +36,11 @@ class FileCryptoActivity : AppCompatActivity() {
     private lateinit var contactSpinner: Spinner
     private lateinit var selectedFileText: TextView
     private lateinit var statusText: TextView
-    private lateinit var encryptBtn: Button
-    private lateinit var decryptBtn: Button
-    private lateinit var shareBtn: Button
-    private lateinit var saveBtn: Button
-    private lateinit var openBtn: Button
+    private lateinit var encryptBtn: MaterialButton
+    private lateinit var decryptBtn: MaterialButton
+    private lateinit var shareBtn: MaterialButton
+    private lateinit var saveBtn: MaterialButton
+    private lateinit var openBtn: MaterialButton
 
     private var selectedInputUri: Uri? = null
     private var selectedDisplayName: String = ""
@@ -83,11 +84,11 @@ class FileCryptoActivity : AppCompatActivity() {
             selectedDisplayName = it.getString(STATE_NAME).orEmpty()
         }
 
-        findViewById<Button>(R.id.file_add_contact).setOnClickListener {
+        findViewById<MaterialButton>(R.id.file_add_contact).setOnClickListener {
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(this, ContactPairingActivity::class.java), ADD_CONTACT)
         }
-        findViewById<Button>(R.id.file_choose).setOnClickListener { pickFile() }
+        findViewById<MaterialButton>(R.id.file_choose).setOnClickListener { pickFile() }
         encryptBtn.setOnClickListener { startOperation(encrypt = true) }
         decryptBtn.setOnClickListener { startOperation(encrypt = false) }
         shareBtn.setOnClickListener { shareResult() }
@@ -180,9 +181,8 @@ class FileCryptoActivity : AppCompatActivity() {
             say("اضغط «اختيار ملف» أولًا.")
             return
         }
-        var target: Pair<String, String>? = null
+        val target: Pair<String, String>? = if (encrypt) selectedPublicKeyB64() else null
         if (encrypt) {
-            target = selectedPublicKeyB64()
             if (target == null) {
                 say("اختر جهة اتصال أولًا — سيُشفَّر الملف بمفتاحها العام. أضف جهة من الزر أعلاه إن لم تكن موجودة.")
                 return
@@ -204,7 +204,7 @@ class FileCryptoActivity : AppCompatActivity() {
                     val outName = sanitize(displayName) + ".skf"
                     val outFile = File(dir, "enc_${System.currentTimeMillis()}.skf")
                     SecureFileCrypto.encryptToFile(this, input, outFile, key, displayName)
-                    onDone(outFile, outName, true, "✓ تم تشفير الملف للجهة «${target.first}» بمفتاحها العام")
+                    onDone(outFile, outName, true, "✓ تم تشفير الملف للجهة «${target!!.first}» بمفتاحها العام")
                 } else {
                     val contactKey = legacyContactKey?.let { runCatching { DeviceIdentity.parseContactPublicKey(it) }.getOrNull() }
                     val (temp, filename) = SecureFileCrypto.decryptToTemp(this, input, contactKey, pass)
@@ -326,7 +326,7 @@ class FileCryptoActivity : AppCompatActivity() {
     private fun setButtonsEnabled(on: Boolean) {
         encryptBtn.isEnabled = on
         decryptBtn.isEnabled = on
-        findViewById<Button>(R.id.file_choose).isEnabled = on
+        findViewById<MaterialButton>(R.id.file_choose).isEnabled = on
     }
 
     private fun say(text: String, toast: Boolean = false) {

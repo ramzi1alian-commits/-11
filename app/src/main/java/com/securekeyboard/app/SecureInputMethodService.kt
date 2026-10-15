@@ -1216,8 +1216,9 @@ class SecureInputMethodService : InputMethodService() {
             var outFile: java.io.File? = null
             try {
                 val outDir = java.io.File(filesDir, "secure_outbox").apply { mkdirs() }
-                outFile = java.io.File(outDir, "out_${System.currentTimeMillis()}_${displayName.hashCode().toUInt().toString(16)}.skf")
-                SecureFileCrypto.encryptToFile(this, input, outFile, publicKey, displayName)
+                val target = java.io.File(outDir, "out_${System.currentTimeMillis()}_${displayName.hashCode().toUInt().toString(16)}.skf")
+                outFile = target
+                SecureFileCrypto.encryptToFile(this, input, target, publicKey, displayName)
                 mainHandler.post {
                     cryptoBusy = false
                     cryptoStatusView?.text = "✓ تم تشفير الملف — جارٍ إرفاق النسخة المشفّرة…"
