@@ -1113,7 +1113,7 @@ class SecureInputMethodService : InputMethodService() {
                     setColor(Prefs.palette(this@SecureInputMethodService).surface2)
                     setStroke(dpToPx(1.5f).coerceAtLeast(1), accent)
                 }
-                setOnClickListener { selectedAttachmentUri = null; selectedAttachmentName = ""; rebuildKeyboardView() }
+                setOnClickListener { AttachmentStore.deleteIfOwnCopy(this@SecureInputMethodService, selectedAttachmentUri); selectedAttachmentUri = null; selectedAttachmentName = ""; rebuildKeyboardView() }
             }
             box.addView(chip, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1295,6 +1295,14 @@ class SecureInputMethodService : InputMethodService() {
     private fun sendSecureAttachment() {
         if (cryptoBusy) return
         val input = selectedAttachmentUri ?: return
+        if (input.scheme == "file" && !java.io.File(input.path ?: "").exists()) {
+            // The private working copy expired or was already used - pick the file again.
+            selectedAttachmentUri = null
+            selectedAttachmentName = ""
+            rebuildKeyboardView()
+            showCryptoNotice("انتهت صلاحية نسخة الملف — اختره مرة أخرى بزر 📎")
+            return
+        }
         val contactName = selectedSecureContact
         var publicKey: java.security.PublicKey? = null
         var sessionPass: CharArray? = null
@@ -1334,6 +1342,8 @@ class SecureInputMethodService : InputMethodService() {
                 } else {
                     SecureFileCrypto.encryptWithPassphraseToFile(this, input, target, sessionPassFinal!!, displayName, fips)
                 }
+                // V54: the plaintext working copy is no longer needed once the encrypted copy exists.
+                AttachmentStore.deleteIfOwnCopy(this, input)
                 mainHandler.post {
                     cryptoBusy = false
                     cryptoStatusView?.text = "✓ تم تشفير الملف — جارٍ إرفاق النسخة المشفّرة…"

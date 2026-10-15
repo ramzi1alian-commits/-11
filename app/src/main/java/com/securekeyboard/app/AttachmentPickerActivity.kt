@@ -1,11 +1,14 @@
 package com.securekeyboard.app
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.widget.Toast
+import java.io.File
+import java.security.SecureRandom
 
 /**
  * The 📎 button of the keyboard's secure-compose page.
@@ -69,10 +72,25 @@ class AttachmentPickerActivity : Activity() {
             // while this app's process is alive.
         }
         val name = queryName(uri)
-        // Persisted first (commit): the keyboard process may have been killed while the
-        // file manager was in the foreground, so a live broadcast alone could be lost.
-        Prefs.setPendingAttachment(this, uri.toString(), name)
-        done(notifyKeyboard = true)
+        // V54: many file managers (e.g. Ace File Explorer) hand out a TEMPORARY read grant that dies as
+        // soon as this Activity finishes ("Permission Denial: opening provider ... that is not exported").
+        // Read the file NOW, while the grant is alive, into a private read-only working copy; the
+        // keyboard encrypts that copy later and deletes it right after. The original is never touched.
+        Toast.makeText(this, "جارٍ تجهيز الملف…", Toast.LENGTH_SHORT).show()
+        Thread {
+            AttachmentStore.purgeOld(this)
+            val copy = AttachmentStore.copyFrom(this, uri)
+            runOnUiThread {
+                if (copy == null) {
+                    Toast.makeText(this, "تعذّر قراءة الملف من مدير الملفات — جرّب اختياره من تطبيق «الملفات» أو مدير آخر", Toast.LENGTH_LONG).show()
+                }
+                val finalUri = if (copy != null) Uri.fromFile(copy) else uri
+                // Persisted first (commit): the keyboard process may have been killed while the
+                // file manager was in the foreground, so a live broadcast alone could be lost.
+                Prefs.setPendingAttachment(this, finalUri.toString(), name)
+                done(notifyKeyboard = true)
+            }
+        }.start()
     }
 
     private fun done(notifyKeyboard: Boolean = false) {
@@ -93,5 +111,43 @@ class AttachmentPickerActivity : Activity() {
             }
         } catch (_: Exception) {}
         return uri.lastPathSegment?.substringAfterLast('/')?.ifBlank { "file" } ?: "file"
+    }
+}
+
+/** V54: private, short-lived working copies of picked files (see AttachmentPickerActivity). */
+object AttachmentStore {
+    private const val DIR = "secure_attach"
+    private const val MAX_AGE_MS = 60L * 60L * 1000L
+
+    private fun dir(c: Context): File = File(c.filesDir, DIR).apply { mkdirs() }
+
+    fun purgeOld(c: Context) {
+        val now = System.currentTimeMillis()
+        dir(c).listFiles()?.forEach { if (now - it.lastModified() > MAX_AGE_MS) it.delete() }
+    }
+
+    /** Streams [uri] into the private dir. Returns null when it cannot be read. */
+    fun copyFrom(c: Context, uri: Uri): File? {
+        val rnd = ByteArray(8).also { SecureRandom().nextBytes(it) }
+        val out = File(dir(c), "att_" + rnd.joinToString("") { "%02x".format(it) } + ".bin")
+        return try {
+            val input = c.contentResolver.openInputStream(uri) ?: return null
+            input.use { i -> out.outputStream().use { o -> i.copyTo(o, 64 * 1024) } }
+            out
+        } catch (e: Exception) {
+            out.delete()
+            null
+        }
+    }
+
+    fun isOwnCopy(c: Context, uri: Uri?): Boolean {
+        if (uri == null || uri.scheme != "file") return false
+        return try {
+            File(uri.path ?: return false).canonicalFile.parentFile == dir(c).canonicalFile
+        } catch (e: Exception) { false }
+    }
+
+    fun deleteIfOwnCopy(c: Context, uri: Uri?) {
+        if (isOwnCopy(c, uri)) try { File(uri!!.path!!).delete() } catch (_: Exception) {}
     }
 }
