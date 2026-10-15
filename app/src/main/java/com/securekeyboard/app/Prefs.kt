@@ -20,6 +20,9 @@ object Prefs {
     private const val KEY_FIPS_MODE = "fips_compatible_mode"
     private const val KEY_RETURN_TO_CRYPTO = "return_to_crypto"
     private const val KEY_RETURN_TO_SECURE_COMPOSE = "return_to_secure_compose"
+    private const val KEY_PENDING_ATTACH_URI = "pending_attach_uri"
+    private const val KEY_PENDING_ATTACH_NAME = "pending_attach_name"
+    private const val KEY_PICKER_RETURNED = "picker_returned"
 
     // Preferences here are only UI/configuration state, not secrets.  The
     // performance fix is to keep ONE process-local SharedPreferences handle
@@ -163,6 +166,45 @@ object Prefs {
      */
     fun markReturnToSecureCompose(context: Context) {
         prefs(context).edit().putBoolean(KEY_RETURN_TO_SECURE_COMPOSE, true).apply()
+    }
+
+    /**
+     * The file chosen in AttachmentPickerActivity is persisted here BEFORE the
+     * picker finishes, so it no longer depends on a live BroadcastReceiver:
+     * if the keyboard process was killed or the service re-created while the
+     * system picker was open, the broadcast was silently lost and the file
+     * "never happened". commit() (not apply()) because the process may die
+     * right after the picker finishes.
+     */
+    fun setPendingAttachment(context: Context, uri: String, name: String) {
+        prefs(context).edit()
+            .putString(KEY_PENDING_ATTACH_URI, uri)
+            .putString(KEY_PENDING_ATTACH_NAME, name)
+            .commit()
+    }
+
+    fun hasPendingAttachment(context: Context): Boolean =
+        prefs(context).getString(KEY_PENDING_ATTACH_URI, null) != null
+
+    /** Returns (uri, name) once and clears it. */
+    fun takePendingAttachment(context: Context): Pair<String, String>? {
+        val p = prefs(context)
+        val uri = p.getString(KEY_PENDING_ATTACH_URI, null) ?: return null
+        val name = p.getString(KEY_PENDING_ATTACH_NAME, "") ?: ""
+        p.edit().remove(KEY_PENDING_ATTACH_URI).remove(KEY_PENDING_ATTACH_NAME).commit()
+        return Pair(uri, name)
+    }
+
+    /** Set when the picker has closed (picked or cancelled): the next onStartInput belongs to the chat app. */
+    fun markPickerReturned(context: Context) {
+        prefs(context).edit().putBoolean(KEY_PICKER_RETURNED, true).commit()
+    }
+
+    fun consumePickerReturned(context: Context): Boolean {
+        val p = prefs(context)
+        val v = p.getBoolean(KEY_PICKER_RETURNED, false)
+        if (v) p.edit().remove(KEY_PICKER_RETURNED).apply()
+        return v
     }
 
     fun consumeReturnToSecureCompose(context: Context): Boolean {

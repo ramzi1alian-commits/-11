@@ -55,7 +55,9 @@
         <activity
             android:name=".AttachmentPickerActivity"
             android:exported="false"
-            android:theme="@style/AppTheme" />
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

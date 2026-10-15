@@ -34,7 +34,9 @@ class AttachmentPickerActivity : Activity() {
             if (uri != null) {
                 try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
                 val name = queryName(uri)
-                val mime = contentResolver.getType(uri) ?: "application/octet-stream"
+                // Persist first: the broadcast below is only a fast path and is
+                // lost if the keyboard service is not alive/registered right now.
+                Prefs.setPendingAttachment(this, uri.toString(), name)
                 sendBroadcast(Intent(ACTION_ATTACHMENT_SELECTED).apply {
                     setPackage(packageName)
                     putExtra(EXTRA_URI, uri)
@@ -47,6 +49,7 @@ class AttachmentPickerActivity : Activity() {
                 })
             }
         }
+        Prefs.markPickerReturned(this)
         finish()
     }
 

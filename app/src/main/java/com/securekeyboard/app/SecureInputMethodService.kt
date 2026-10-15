@@ -266,10 +266,14 @@ class SecureInputMethodService : InputMethodService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 AttachmentPickerActivity.ACTION_ATTACHMENT_SELECTED -> {
-                    val uri = intent.getParcelableExtra<Uri>(AttachmentPickerActivity.EXTRA_URI) ?: return
-                    selectedAttachmentUri = uri
-                    selectedAttachmentName = intent.getStringExtra(AttachmentPickerActivity.EXTRA_NAME).orEmpty().ifBlank { "file" }
-                    selectedAttachmentMime = "application/octet-stream"
+                    if (!applyPendingAttachment()) {
+                        val uri = intent.getParcelableExtra<Uri>(AttachmentPickerActivity.EXTRA_URI) ?: return
+                        selectedAttachmentUri = uri
+                        selectedAttachmentName = intent.getStringExtra(AttachmentPickerActivity.EXTRA_NAME).orEmpty().ifBlank { "file" }
+                        selectedAttachmentMime = "application/octet-stream"
+                    }
+                    secureComposeSticky = true
+                    showingSecureCompose = true
                     rebuildKeyboardView()
                 }
                 else -> return
@@ -278,9 +282,42 @@ class SecureInputMethodService : InputMethodService() {
             // reported on Android 8 too. Ask the system to show this IME
             // again after the bridge/tool Activity has finished, without
             // changing the selected target field.
-            mainHandler.postDelayed({
-                try { requestShowSelf(android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) } catch (_: Exception) {}
-            }, 180L)
+            scheduleReshow()
+        }
+    }
+
+    /**
+     * The picked file is persisted by AttachmentPickerActivity (Prefs); this
+     * loads it into the in-memory selection. Safe to call from any lifecycle
+     * point - it is a no-op when nothing is pending.
+     */
+    private fun applyPendingAttachment(): Boolean {
+        val pending = Prefs.takePendingAttachment(this) ?: return false
+        val uri = try { Uri.parse(pending.first) } catch (_: Exception) { return false }
+        selectedAttachmentUri = uri
+        selectedAttachmentName = pending.second.ifBlank { "file" }
+        selectedAttachmentMime = "application/octet-stream"
+        return true
+    }
+
+    private val reshowRunnable = Runnable {
+        try { if (!isInputViewShown) requestShowSelf(0) } catch (_: Exception) {}
+    }
+
+    /** Re-show the keyboard after the picker closes; retried because the chat window may not have focus yet. */
+    private fun scheduleReshow() {
+        mainHandler.removeCallbacks(reshowRunnable)
+        mainHandler.postDelayed(reshowRunnable, 250L)
+        mainHandler.postDelayed(reshowRunnable, 800L)
+        mainHandler.postDelayed(reshowRunnable, 1600L)
+    }
+
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        // Fires when the chat editor regains focus even if the keyboard stays
+        // hidden (onStartInputView is NOT called in that case).
+        if (Prefs.consumePickerReturned(this) || Prefs.hasPendingAttachment(this)) {
+            scheduleReshow()
         }
     }
     private var contactPopup: PopupWindow? = null
@@ -2180,7 +2217,12 @@ class SecureInputMethodService : InputMethodService() {
         if (restoreSecureCompose) {
             secureComposeSticky = true
         }
-        val cameFromOverlay = showingSymbols || showingEmoji || showingCrypto || showingSecureCompose || restoreCrypto || restoreSecureCompose
+        // A file picked while this process/receiver was not alive is still in Prefs.
+        val gotAttachment = applyPendingAttachment()
+        if (gotAttachment) {
+            secureComposeSticky = true
+        }
+        val cameFromOverlay = showingSymbols || showingEmoji || showingCrypto || showingSecureCompose || restoreCrypto || restoreSecureCompose || gotAttachment
         showingSymbols = false
         showingEmoji = false
         // Sensitive plaintext from a previous decrypt never survives a
