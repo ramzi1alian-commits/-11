@@ -150,7 +150,7 @@ class SecureFileReceiveActivity : Activity() {
             if (decrypted == null) {
                 runOnUiThread {
                     decrypting = false
-                    statusText.text = "فشل فك التشفير — المفتاح أو جهة الاتصال غير صحيحة، أو الملف تالف."
+                    statusText.text = "فشل فك التشفير — لم يُشفَّر لمفتاحك العام، أو مفتاح الجلسة (للتشفير العام) غير نشط/غير مطابق، أو الملف تالف."
                     Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
                     decryptBtn.isEnabled = true
                 }

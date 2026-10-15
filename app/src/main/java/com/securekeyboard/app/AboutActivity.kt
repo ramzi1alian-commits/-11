@@ -13,7 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
  * comments elsewhere in this project. Nothing here is dynamic and
  * nothing here reads or writes any user data.
  */
-class AboutActivity : AppCompatActivity() {
+class AboutActivity : SkActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeUtil.applyTo(this)

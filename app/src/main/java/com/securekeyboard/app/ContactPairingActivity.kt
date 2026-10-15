@@ -38,7 +38,7 @@ import java.security.PublicKey
  * verbally checking the number against the other device, exactly like
  * Signal's Safety Number confirmation.
  */
-class ContactPairingActivity : AppCompatActivity() {
+class ContactPairingActivity : SkActivity() {
 
     private lateinit var contactName: String
     private val scanLauncher = registerForActivityResult(ScanContract()) { result ->

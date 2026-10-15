@@ -21,6 +21,8 @@ class SecurityApplication : Application() {
         // Do not emit the posture to logcat: a hardened build should minimize
         // useful security telemetry available to local attackers.
         SecurityRuntime.assess(this)
+        // Start every screen in the day/night configuration of the saved palette.
+        ThemeUtil.syncNightMode(this)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                 activity.window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)

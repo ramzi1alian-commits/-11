@@ -32,7 +32,7 @@ import java.util.Arrays
  * Decryption needs no contact: current files are opened with this device's
  * own private key. No session passphrase is required any more.
  */
-class FileCryptoActivity : AppCompatActivity() {
+class FileCryptoActivity : SkActivity() {
     private lateinit var contactSpinner: Spinner
     private lateinit var selectedFileText: TextView
     private lateinit var statusText: TextView
@@ -61,6 +61,8 @@ class FileCryptoActivity : AppCompatActivity() {
         private const val OPEN_DIR = "secure_open"
         private const val MAX_AGE_MS = 6L * 60L * 60L * 1000L
         const val SELF_LABEL = "🔒 نفسي (هذا الجهاز فقط)"
+        // Public / session mode: no pairing needed, both sides use the same session key.
+        const val PUBLIC_LABEL = "🌐 عام — بمفتاح الجلسة (بدون اقتران)"
         private const val PLACEHOLDER = "— اختر جهة اتصال —"
     }
 
@@ -97,7 +99,7 @@ class FileCryptoActivity : AppCompatActivity() {
 
         refreshContacts(intent.getStringExtra(EXTRA_CONTACT_NAME))
         refreshFileLabel()
-        statusText.text = "1) اختر جهة الاتصال  2) اختر الملف  3) اضغط تشفير"
+        statusText.text = "1) اختر جهة الاتصال (أو «عام» بمفتاح الجلسة)  2) اختر الملف  3) اضغط تشفير"
         ThemeUtil.tintPrimary(this, encryptBtn, findViewById(R.id.file_choose))
         ThemeUtil.tintOutline(this, findViewById(R.id.file_add_contact), decryptBtn, shareBtn, saveBtn, openBtn)
         Fonts.applyToTree(findViewById(android.R.id.content), Fonts.currentTypeface(this))
@@ -115,7 +117,7 @@ class FileCryptoActivity : AppCompatActivity() {
         val previous = preferred ?: (contactSpinner.selectedItem as? String)
         names.clear()
         names.addAll(ContactStore.listPairedContactNames(this))
-        val labels = listOf(PLACEHOLDER) + names + listOf(SELF_LABEL)
+        val labels = listOf(PLACEHOLDER) + names + listOf(PUBLIC_LABEL, SELF_LABEL)
         contactSpinner.adapter = ArrayAdapter(this, R.layout.spinner_item_light_text, labels).also {
             it.setDropDownViewResource(R.layout.spinner_dropdown_item_light_text)
         }
@@ -170,9 +172,12 @@ class FileCryptoActivity : AppCompatActivity() {
         val label = contactSpinner.selectedItem as? String
         if (pos <= 0 || label == null) return null
         if (label == SELF_LABEL) return SELF_LABEL to DeviceIdentity.myPublicKeyBase64(this)
+        if (label == PUBLIC_LABEL) return null
         val b64 = ContactStore.getPairedContact(this, label) ?: return null
         return label to b64
     }
+
+    private fun publicModeSelected(): Boolean = (contactSpinner.selectedItem as? String) == PUBLIC_LABEL
 
     private fun startOperation(encrypt: Boolean) {
         if (busy) return
@@ -181,24 +186,38 @@ class FileCryptoActivity : AppCompatActivity() {
             say("اضغط «اختيار ملف» أولًا.")
             return
         }
-        val target: Pair<String, String>? = if (encrypt) selectedPublicKeyB64() else null
+        val publicMode = encrypt && publicModeSelected()
+        val target: Pair<String, String>? = if (encrypt && !publicMode) selectedPublicKeyB64() else null
         if (encrypt) {
-            if (target == null) {
-                say("اختر جهة اتصال أولًا — سيُشفَّر الملف بمفتاحها العام. أضف جهة من الزر أعلاه إن لم تكن موجودة.")
+            if (publicMode) {
+                if (!SessionKeyStore.isActive()) {
+                    say("التشفير العام يحتاج مفتاح جلسة نشطًا — فعّله من شاشة التشفير الكاملة، أو اختر جهة اتصال.")
+                    return
+                }
+            } else if (target == null) {
+                say("اختر جهة اتصال (أو «عام» بمفتاح الجلسة) أولًا. أضف جهة من الزر أعلاه إن لم تكن موجودة.")
                 return
             }
         }
         busy = true
         clearResult()
         setButtonsEnabled(false)
-        say(if (encrypt) "جارٍ التشفير بالمفتاح العام… لا تغلق الشاشة" else "جارٍ فك التشفير… لا تغلق الشاشة")
+        say(if (encrypt) (if (publicMode) "جارٍ التشفير بمفتاح الجلسة… لا تغلق الشاشة" else "جارٍ التشفير بالمفتاح العام… لا تغلق الشاشة") else "جارٍ فك التشفير… لا تغلق الشاشة")
         val displayName = selectedDisplayName.ifBlank { "file" }
         // Old (v1/v2) files may still need the session passphrase / a contact key.
         val legacyContactKey = if (!encrypt) selectedPublicKeyB64()?.second else null
-        val pass = if (!encrypt && SessionKeyStore.isActive()) SessionKeyStore.get() else null
+        // Session passphrase: needed to open public-mode (v4) and older (v1/v2) files, and to seal in public mode.
+        val pass = if ((!encrypt || publicMode) && SessionKeyStore.isActive()) SessionKeyStore.get() else null
         Thread {
             try {
-                if (encrypt) {
+                if (encrypt && publicMode) {
+                    val passphrase = pass ?: throw IllegalStateException("no active session key")
+                    val dir = File(filesDir, OUTBOX).apply { mkdirs() }
+                    val outName = sanitize(displayName) + ".skf"
+                    val outFile = File(dir, "enc_${System.currentTimeMillis()}.skf")
+                    SecureFileCrypto.encryptWithPassphraseToFile(this, input, outFile, passphrase, displayName, Prefs.fipsMode(this))
+                    onDone(outFile, outName, true, "✓ تم تشفير الملف بمفتاح الجلسة (عام) — يحتاج الطرف الآخر المفتاح نفسه")
+                } else if (encrypt) {
                     val key = DeviceIdentity.parseContactPublicKey(target!!.second)
                     val dir = File(filesDir, OUTBOX).apply { mkdirs() }
                     val outName = sanitize(displayName) + ".skf"
@@ -221,10 +240,10 @@ class FileCryptoActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 val msg = when {
                     e is SecureFileCrypto.PassphraseRequiredException ->
-                        "هذا ملف بصيغة قديمة يحتاج مفتاح جلسة نشطًا (فعّله من شاشة التشفير) واختيار جهة الاتصال."
+                        "هذا الملف مشفّر بمفتاح الجلسة (عام) أو بصيغة قديمة: فعّل نفس مفتاح الجلسة من شاشة التشفير ثم أعد المحاولة."
                     e is javax.crypto.AEADBadTagException || e.cause is javax.crypto.AEADBadTagException ->
                         if (encrypt) "فشل التشفير: ${e.message}"
-                        else "لا يمكن فك هذا الملف على هذا الجهاز: لم يُشفَّر لمفتاحك العام (أو الملف تالف)."
+                        else "لا يمكن فك هذا الملف: إما لم يُشفَّر لمفتاحك العام، أو مفتاح الجلسة الحالي لا يطابق مفتاح التشفير، أو الملف تالف."
                     e.message?.contains("not a SecureKeyboard file") == true ->
                         "هذا ليس ملفًا مشفّرًا بواسطة هذا التطبيق (لاحقة .skf)."
                     else -> "تعذر تنفيذ العملية: ${e.message ?: "خطأ غير معروف"}"

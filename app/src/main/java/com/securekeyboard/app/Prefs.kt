@@ -119,7 +119,10 @@ object Prefs {
     }
 
     fun setThemeId(context: Context, id: String) {
-        prefs(context).edit().putString(KEY_THEME, Themes.byId(id).id).apply()
+        prefs(context).edit().putString(KEY_THEME, Themes.byId(id).id).commit()
+        // Switch AppCompat's day/night mode NOW, before any screen is re-created, so the new
+        // screen starts in the right configuration instead of flipping it mid-onCreate.
+        ThemeUtil.syncNightMode(context)
     }
 
     fun palette(context: Context): Palette = Themes.byId(themeId(context))
@@ -418,12 +421,17 @@ object ThemeUtil {
      * applies the chosen palette's theme overlay, window/status/navigation
      * colors and the matching AppCompat day/night mode.
      */
-    fun applyTo(activity: android.app.Activity) {
-        val p = Prefs.palette(activity)
+    /** Makes AppCompat's day/night mode match the chosen palette (no-op when it already does). */
+    fun syncNightMode(context: Context) {
         androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
-            if (p.dark) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            if (Prefs.palette(context).dark) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
             else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
         )
+    }
+
+    fun applyTo(activity: android.app.Activity) {
+        val p = Prefs.palette(activity)
+        syncNightMode(activity)
         activity.theme.applyStyle(p.styleRes, true)
         // Window/status/navigation bar colors come from the SkTheme.* overlay itself.
     }

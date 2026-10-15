@@ -8,7 +8,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.button.MaterialButton
 
-class ThemeSettingsActivity : AppCompatActivity() {
+class ThemeSettingsActivity : SkActivity() {
 
     private lateinit var swatchCyan: View
     private lateinit var swatchTeal: View

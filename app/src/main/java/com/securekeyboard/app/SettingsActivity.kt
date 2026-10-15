@@ -13,7 +13,7 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : SkActivity() {
 
     // Storage Access Framework launchers - the user picks the file's
     // name/location (export) or which file to read (import) via

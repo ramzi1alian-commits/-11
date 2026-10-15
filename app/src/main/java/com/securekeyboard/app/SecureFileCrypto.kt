@@ -28,6 +28,13 @@ import javax.crypto.spec.SecretKeySpec
  * No passphrase / session key is involved, so a file can be encrypted for a
  * contact at any time and only that contact's device can open it.
  *
+ * SKF2 v4 (PUBLIC / session mode) is passphrase-only encryption for when no
+ * contact is paired: AES-256-GCM key = HKDF(KDF(session passphrase, random salt)).
+ * The KDF is chosen from the same fixed profile table as the compact text
+ * messages ([CompactFormat]: Argon2id 96/64/48/32 MB, or PBKDF2-HMAC-SHA-256 in the
+ * optional FIPS mode), so a crafted file can never request an arbitrary cost.
+ * Both sides must hold the same session passphrase (agreed out of band).
+ *
  * SKF2 v2 (ECDHE + session passphrase) and v1 (static ECDH + passphrase) stay
  * decryptable for migration compatibility - they still need the passphrase
  * that was used when they were written.
@@ -37,6 +44,10 @@ object SecureFileCrypto {
     private const val VERSION_LEGACY: Byte = 1
     private const val VERSION_ECDHE: Byte = 2
     private const val VERSION_PUBKEY: Byte = 3
+    private const val VERSION_PASSPHRASE: Byte = 4
+    private const val SALT_LENGTH = 16
+    private val SALT_FILE_PASS = "SecureKeyboard/file/v4/salt".toByteArray(Charsets.UTF_8)
+    private val LABEL_FILE_PASS = "SecureKeyboard/file/v4/passphrase".toByteArray(Charsets.UTF_8)
     private const val IV_LENGTH = 12
     private const val EPHEMERAL_MAX = 200
     private const val LEGACY_HEADER_LENGTH = 4 + 1 + IV_LENGTH + IV_LENGTH + 4
@@ -164,11 +175,170 @@ object SecureFileCrypto {
     }
 
     /**
+     * PUBLIC (session) mode: encrypts [input] with the session [passphrase] only - no
+     * contact / pairing needed. Writes straight to a private [outFile]; the source is
+     * only read. Format SKF2 v4:
+     *   MAGIC | 4 | profile(1) | salt(16) | metaIv(12) | contentIv(12) | metaLen(4) | metaCipher | content
+     */
+    fun encryptWithPassphraseToFile(
+        context: Context, input: Uri, outFile: File,
+        passphrase: CharArray, displayName: String?, fipsMode: Boolean
+    ) {
+        require(passphrase.isNotEmpty()) { "passphrase is empty" }
+        try {
+            context.contentResolver.openInputStream(input).use { rawIn ->
+                require(rawIn != null) { "cannot open input" }
+                FileOutputStream(outFile).use { rawOut ->
+                    encryptPassphraseStreams(rawIn, rawOut, passphrase, displayName, fipsMode)
+                    rawOut.flush()
+                    try { rawOut.fd.sync() } catch (_: Exception) { /* best effort */ }
+                }
+            }
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
+        }
+    }
+
+    /** key = HKDF(KDF(passphrase, salt), info = label || prefix || profile || salt). */
+    private fun derivePassphraseFileKey(profile: Int, passphrase: CharArray, salt: ByteArray, headerStart: ByteArray): ByteArray {
+        val secret = CompactFormat.deriveSecret(profile, passphrase, salt)
+        val info = LABEL_FILE_PASS + byteArrayOf(0) + headerStart
+        try {
+            return CompactFormat.hkdf(SALT_FILE_PASS, secret, info, 32)
+        } finally {
+            Arrays.fill(secret, 0); Arrays.fill(info, 0)
+        }
+    }
+
+    private fun encryptPassphraseStreams(
+        rawIn: java.io.InputStream,
+        rawOut: java.io.OutputStream,
+        passphrase: CharArray,
+        displayName: String?,
+        fipsMode: Boolean
+    ) {
+        val random = SecureRandom()
+        val profile = CompactFormat.profileForNewMessage(fipsMode)
+        val salt = ByteArray(SALT_LENGTH).also { random.nextBytes(it) }
+        val metaIv = ByteArray(IV_LENGTH).also { random.nextBytes(it) }
+        val contentIv = ByteArray(IV_LENGTH).also { random.nextBytes(it) }
+        // Fixed, authenticated prefix that is also bound into the key: MAGIC | ver | profile | salt
+        val headerStart = MAGIC + byteArrayOf(VERSION_PASSPHRASE, profile.toByte()) + salt
+        val key = derivePassphraseFileKey(profile, passphrase, salt, headerStart)
+        var header = ByteArray(0)
+        var metaCipher = ByteArray(0)
+        try {
+            val filenameBytes = (displayName ?: "encrypted_file").ifBlank { "encrypted_file" }.toByteArray(Charsets.UTF_8)
+            try {
+                require(filenameBytes.size <= 4096) { "filename too long" }
+                header = headerStart + metaIv + contentIv + ByteArray(4)
+                metaCipher = aesGcmEncrypt(key, metaIv, header.copyOf(header.size - 4), filenameBytes)
+                require(metaCipher.size <= MAX_METADATA_CIPHER)
+                ByteBuffer.wrap(header, header.size - 4, 4).putInt(metaCipher.size)
+            } finally { Arrays.fill(filenameBytes, 0) }
+            streamEncryptContent(rawIn, rawOut, key, contentIv, header, metaCipher)
+        } finally {
+            Arrays.fill(key, 0); Arrays.fill(salt, 0); Arrays.fill(metaIv, 0); Arrays.fill(contentIv, 0)
+            Arrays.fill(header, 0); Arrays.fill(metaCipher, 0); Arrays.fill(headerStart, 0)
+        }
+    }
+
+    private fun streamEncryptContent(
+        rawIn: java.io.InputStream, rawOut: java.io.OutputStream,
+        key: ByteArray, contentIv: ByteArray, header: ByteArray, metaCipher: ByteArray
+    ) {
+        BufferedInputStream(rawIn, BUFFER_SIZE).use { inputStream ->
+            val outputStream = BufferedOutputStream(rawOut, BUFFER_SIZE)
+            outputStream.write(header)
+            outputStream.write(metaCipher)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, contentIv))
+            cipher.updateAAD(header + metaCipher)
+            val buffer = ByteArray(BUFFER_SIZE)
+            var total = 0L
+            try {
+                while (true) {
+                    val read = inputStream.read(buffer)
+                    if (read < 0) break
+                    total += read.toLong()
+                    require(total <= MAX_FILE_BYTES) { "file too large" }
+                    val part = cipher.update(buffer, 0, read)
+                    if (part != null && part.isNotEmpty()) outputStream.write(part)
+                }
+                outputStream.write(cipher.doFinal())
+                outputStream.flush()
+            } finally { Arrays.fill(buffer, 0) }
+        }
+    }
+
+    private class PassphraseHeader(
+        val header: ByteArray,
+        val key: ByteArray,
+        val metaIv: ByteArray,
+        val contentIv: ByteArray,
+        val metaLen: Int
+    ) {
+        fun wipe() {
+            Arrays.fill(header, 0); Arrays.fill(key, 0); Arrays.fill(metaIv, 0); Arrays.fill(contentIv, 0)
+        }
+    }
+
+    /** Layout after the 5-byte prefix: profile(1) | salt(16) | metaIv(12) | contentIv(12) | metaLen(4). */
+    private fun readPassphraseHeader(input: java.io.InputStream, prefix: ByteArray, passphrase: CharArray): PassphraseHeader {
+        val rest = ByteArray(1 + SALT_LENGTH + IV_LENGTH * 2 + 4)
+        readFully(input, rest)
+        val profile = rest[0].toInt() and 0xff
+        require(profile in 0..CompactFormat.PROFILE_PBKDF2) { "unknown KDF profile" }
+        val salt = rest.copyOfRange(1, 1 + SALT_LENGTH)
+        val metaIv = rest.copyOfRange(1 + SALT_LENGTH, 1 + SALT_LENGTH + IV_LENGTH)
+        val contentIv = rest.copyOfRange(1 + SALT_LENGTH + IV_LENGTH, 1 + SALT_LENGTH + IV_LENGTH * 2)
+        val metaLen = ByteBuffer.wrap(rest, rest.size - 4, 4).int
+        require(metaLen in 16..MAX_METADATA_CIPHER) { "invalid metadata" }
+        val header = prefix + rest
+        val headerStart = prefix + rest.copyOfRange(0, 1 + SALT_LENGTH)
+        val key = try {
+            derivePassphraseFileKey(profile, passphrase, salt, headerStart)
+        } finally {
+            Arrays.fill(salt, 0); Arrays.fill(headerStart, 0); Arrays.fill(rest, 0)
+        }
+        return PassphraseHeader(header, key, metaIv, contentIv, metaLen)
+    }
+
+    private fun verifyPassphrase(input: java.io.InputStream, prefix: ByteArray, passphrase: CharArray): String {
+        val h = readPassphraseHeader(input, prefix, passphrase)
+        val metaCipher = ByteArray(h.metaLen)
+        try {
+            readFully(input, metaCipher)
+            val filenameBytes = aesGcmDecrypt(h.key, h.metaIv, h.header.copyOf(h.header.size - 4), metaCipher)
+            val filename = try { String(filenameBytes, Charsets.UTF_8) } finally { Arrays.fill(filenameBytes, 0) }
+            verifyContent(input, h.key, h.contentIv, h.header, metaCipher)
+            return filename
+        } finally {
+            Arrays.fill(metaCipher, 0); h.wipe()
+        }
+    }
+
+    private fun decryptPassphrase(input: java.io.InputStream, prefix: ByteArray, passphrase: CharArray, temp: File): Pair<File, String> {
+        val h = readPassphraseHeader(input, prefix, passphrase)
+        val metaCipher = ByteArray(h.metaLen)
+        try {
+            readFully(input, metaCipher)
+            val filenameBytes = aesGcmDecrypt(h.key, h.metaIv, h.header.copyOf(h.header.size - 4), metaCipher)
+            val filename = try { String(filenameBytes, Charsets.UTF_8) } finally { Arrays.fill(filenameBytes, 0) }
+            decryptContent(input, temp, h.key, h.contentIv, h.header, metaCipher)
+            return temp to filename
+        } finally {
+            Arrays.fill(metaCipher, 0); h.wipe()
+        }
+    }
+
+    /**
      * Decrypts to a private cache file. For current (v3) files only this
      * device's own private key is needed - [contactPublicKey] and
-     * [passphrase] may be null. Older v1/v2 files still need [passphrase]
-     * (and v1 also the contact key); [PassphraseRequiredException] is thrown
-     * when it is missing.
+     * [passphrase] may be null. Public-mode (v4) files and older v1/v2 files
+     * need [passphrase] (v1 also the contact key); [PassphraseRequiredException]
+     * is thrown when it is missing.
      */
     fun decryptToTemp(context: Context, input: Uri, contactPublicKey: PublicKey?, passphrase: CharArray?): Pair<File, String> {
         val temp = File.createTempFile("skf_dec_", ".tmp", context.cacheDir)
@@ -189,6 +359,7 @@ object SecureFileCrypto {
                             VERSION_LEGACY -> verifyLegacy(context, inputStream, prefix, needContact(contactPublicKey), needPass(passphrase))
                             VERSION_ECDHE -> verifyEcdhe(context, inputStream, prefix, KeyMode.PASSPHRASE, needPass(passphrase))
                             VERSION_PUBKEY -> verifyEcdhe(context, inputStream, prefix, KeyMode.PUBLIC_KEY, null)
+                            VERSION_PASSPHRASE -> verifyPassphrase(inputStream, prefix, needPass(passphrase))
                             else -> throw IllegalArgumentException("unsupported file version")
                         }
                     } finally { Arrays.fill(prefix, 0) }
@@ -207,6 +378,7 @@ object SecureFileCrypto {
                             VERSION_LEGACY -> decryptLegacy(context, inputStream, prefix, needContact(contactPublicKey), needPass(passphrase), temp)
                             VERSION_ECDHE -> decryptEcdhe(context, inputStream, prefix, KeyMode.PASSPHRASE, needPass(passphrase), temp)
                             VERSION_PUBKEY -> decryptEcdhe(context, inputStream, prefix, KeyMode.PUBLIC_KEY, null, temp)
+                            VERSION_PASSPHRASE -> decryptPassphrase(inputStream, prefix, needPass(passphrase), temp)
                             else -> throw IllegalArgumentException("unsupported file version")
                         }
                     } finally { Arrays.fill(prefix, 0) }

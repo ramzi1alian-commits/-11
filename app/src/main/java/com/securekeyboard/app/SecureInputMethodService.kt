@@ -866,9 +866,23 @@ class SecureInputMethodService : InputMethodService() {
         // button always opens the file screen (it used to only show a toast
         // when no session key was active - that read as "nothing happens").
         fileRow.addView(makeKey("📁 تشفير الملفات", weight = 1f, heightDp = heightDp, accented = true) {
-            openSecureFileCrypto()
+            // Same flow as typing: file manager -> back to the secure-compose box with the file
+            // shown in it -> 🔐 encrypts (selected contact's public key, or public/session mode
+            // with no contact) and injects into the chat.
+            showingCrypto = false
+            cryptoMenuSticky = false
+            showingSecureCompose = true
+            secureComposeSticky = true
+            rebuildKeyboardView()
+            openAttachmentPicker()
         })
         root.addView(fileRow)
+
+        val fileScreenRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fileScreenRow.addView(makeKey("🗂 شاشة الملفات (فك التشفير/حفظ)", weight = 1f, heightDp = heightDp) {
+            openSecureFileCrypto()
+        })
+        root.addView(fileScreenRow)
 
         val encryptRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         encryptRow.addView(makeKey(getString(R.string.crypto_panel_encrypt_btn), weight = 1f, heightDp = heightDp, accented = sessionActive) {
@@ -1076,26 +1090,42 @@ class SecureInputMethodService : InputMethodService() {
             text = composeBuffer.toString()
         }
         composePreviewView = preview
+        // The secure box holds BOTH the typed text and the picked file: the file shows up as a
+        // chip at the top of the same box (tap it to remove), the text below it. 🔐 encrypts
+        // the file first (for the selected contact, or in public/session mode with no contact),
+        // and the text remains in the box for the next 🔐 press.
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (selectedAttachmentUri != null) {
+            val accent = ThemeUtil.accentColor(this@SecureInputMethodService)
+            val modeLabel = if (selectedSecureContact == null) "تشفير عام بمفتاح الجلسة" else "للجهة 🔐 $selectedSecureContact"
+            val chip = TextView(this).apply {
+                text = "📎 ${selectedAttachmentName.ifBlank { "ملف" }}   ✕\nجاهز للتشفير ($modeLabel) — اضغط 🔐 • اضغط هنا للإزالة"
+                setTextColor(accent)
+                textSize = 12f
+                gravity = Gravity.CENTER
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                textDirection = View.TEXT_DIRECTION_RTL
+                setPadding(dpToPx(8f), dpToPx(6f), dpToPx(8f), dpToPx(6f))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dpToPx(10f).toFloat()
+                    setColor(Prefs.palette(this@SecureInputMethodService).surface2)
+                    setStroke(dpToPx(1.5f).coerceAtLeast(1), accent)
+                }
+                setOnClickListener { selectedAttachmentUri = null; selectedAttachmentName = ""; rebuildKeyboardView() }
+            }
+            box.addView(chip, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dpToPx(6f), dpToPx(4f), dpToPx(6f), dpToPx(2f)) })
+        }
+        box.addView(preview)
         val previewScroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dpToPx(heightDp * 1.7f)
             )
-            addView(preview)
+            addView(box)
         }
         root.addView(previewScroll)
-
-        if (selectedAttachmentUri != null) {
-            val attachmentView = TextView(this).apply {
-                text = "📎 ${selectedAttachmentName.ifBlank { "ملف" }}\nسيُشفّر عند الضغط على 🔐 مع إبقاء الأصل كما هو"
-                setTextColor(ThemeUtil.accentColor(this@SecureInputMethodService))
-                textSize = 11f
-                gravity = Gravity.CENTER
-                setPadding(dpToPx(6f), dpToPx(4f), dpToPx(6f), dpToPx(4f))
-                setOnClickListener { selectedAttachmentUri = null; selectedAttachmentName = ""; rebuildKeyboardView() }
-            }
-            root.addView(attachmentView)
-        }
 
         // Encrypt/decrypt actions live right above the keys, always
         // visible and always reachable without leaving this screen.
@@ -1126,7 +1156,7 @@ class SecureInputMethodService : InputMethodService() {
         root.addView(operationStatus)
 
         val contactStatus = TextView(this).apply {
-            text = if (selectedSecureContact == null) "الجهة: غير محددة — سيُستخدم التشفير العام للجلسة" else "الجهة: 🔐 $selectedSecureContact — تشفير مرتبط بالجهازين"
+            text = if (selectedSecureContact == null) "الجهة: غير محددة — تشفير عام بمفتاح الجلسة (بدون اقتران، للنص والملفات)" else "الجهة: 🔐 $selectedSecureContact — تشفير بالمفتاح العام للجهة (نص وملفات)"
             setTextColor(if (selectedSecureContact == null) ThemeUtil.textColor(this@SecureInputMethodService) else ThemeUtil.accentColor(this@SecureInputMethodService))
             textSize = 11f
             gravity = Gravity.CENTER
@@ -1240,25 +1270,38 @@ class SecureInputMethodService : InputMethodService() {
 
     /** Encrypts the selected original into a separate outgoing SKF2 file and
      * injects it into the focused app through InputConnection.commitContent().
+     * Same two modes as typed text, as set in the keyboard:
+     *  - a contact is selected  -> public-key encryption for that contact (SKF2 v3)
+     *  - no contact (public mode) -> session-passphrase encryption (SKF2 v4); no pairing needed,
+     *    both sides just need the same session key.
      * The source URI is read-only and is never overwritten or deleted. */
     private fun sendSecureAttachment() {
         if (cryptoBusy) return
         val input = selectedAttachmentUri ?: return
         val contactName = selectedSecureContact
+        var publicKey: java.security.PublicKey? = null
+        var sessionPass: CharArray? = null
         if (contactName.isNullOrBlank()) {
-            showCryptoNotice("اختر جهة اتصال آمنة أولاً")
-            return
+            // Public / session mode - exactly like typed text without a contact.
+            sessionPass = SessionKeyStore.get()
+            if (sessionPass == null) {
+                showCryptoNotice(R.string.crypto_panel_no_session)
+                return
+            }
+        } else {
+            val keyB64 = ContactStore.getPairedContact(this, contactName)
+            if (keyB64.isNullOrBlank()) {
+                showCryptoNotice("مفتاح جهة الاتصال غير موجود")
+                return
+            }
+            publicKey = try { DeviceIdentity.parseContactPublicKey(keyB64) } catch (e: Exception) {
+                showCryptoNotice("مفتاح جهة الاتصال غير صالح")
+                return
+            }
         }
-        val keyB64 = ContactStore.getPairedContact(this, contactName)
-        if (keyB64.isNullOrBlank()) {
-            showCryptoNotice("مفتاح جهة الاتصال غير موجود")
-            return
-        }
-        val publicKey = try { DeviceIdentity.parseContactPublicKey(keyB64) } catch (e: Exception) {
-            showCryptoNotice("مفتاح جهة الاتصال غير صالح")
-            return
-        }
-        val mime = selectedAttachmentMime
+        val fips = Prefs.fipsMode(this)
+        val contactKeyFinal = publicKey
+        val sessionPassFinal = sessionPass
         val displayName = selectedAttachmentName.ifBlank { "file" }
         cryptoBusy = true
         cryptoStatusView?.text = "جارٍ تشفير الملف وإرفاقه…"
@@ -1269,13 +1312,19 @@ class SecureInputMethodService : InputMethodService() {
                 val outDir = java.io.File(filesDir, "secure_outbox").apply { mkdirs() }
                 val target = java.io.File(outDir, "out_${System.currentTimeMillis()}_${displayName.hashCode().toUInt().toString(16)}.skf")
                 outFile = target
-                SecureFileCrypto.encryptToFile(this, input, target, publicKey, displayName)
+                if (contactKeyFinal != null) {
+                    SecureFileCrypto.encryptToFile(this, input, target, contactKeyFinal, displayName)
+                } else {
+                    SecureFileCrypto.encryptWithPassphraseToFile(this, input, target, sessionPassFinal!!, displayName, fips)
+                }
                 mainHandler.post {
                     cryptoBusy = false
                     cryptoStatusView?.text = "✓ تم تشفير الملف — جارٍ إرفاق النسخة المشفّرة…"
                     val ic = currentInputConnection
                     if (ic == null || android.os.Build.VERSION.SDK_INT < 25) {
-                        showCryptoNotice("هذا التطبيق لا يدعم إرفاق الملفات من لوحة المفاتيح على هذا النظام")
+                        // Direct insertion is not available here: hand the encrypted copy to the
+                        // system share sheet instead (choose WhatsApp, then press its Send).
+                        shareEncryptedAttachment(outFile!!, displayName)
                         return@post
                     }
                     try {
@@ -1311,6 +1360,8 @@ class SecureInputMethodService : InputMethodService() {
                     cryptoStatusView?.text = "فشل تشفير الملف — ${e.message ?: "خطأ غير معروف"}"
                     showCryptoNotice("فشل تشفير الملف: ${e.message ?: "خطأ غير معروف"}")
                 }
+            } finally {
+                sessionPassFinal?.let { java.util.Arrays.fill(it, ' ') }
             }
         }
     }

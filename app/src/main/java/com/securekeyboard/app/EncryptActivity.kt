@@ -63,7 +63,7 @@ import java.util.Arrays
  * produced by older builds (without the header) will not decrypt with
  * this version - see README changelog.
  */
-class EncryptActivity : AppCompatActivity() {
+class EncryptActivity : SkActivity() {
 
     private lateinit var inputText: EditText
     private lateinit var inputKey: EditText

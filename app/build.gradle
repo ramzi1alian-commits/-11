@@ -43,8 +43,8 @@ android {
         applicationId "com.securekeyboard.pro"
         minSdk 24
         targetSdk 34
-        versionCode 48
-        versionName "4.8"
+        versionCode 51
+        versionName "5.1"
     }
 
     signingConfigs {
