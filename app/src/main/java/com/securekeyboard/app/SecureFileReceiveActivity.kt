@@ -32,6 +32,7 @@ import java.util.Arrays
  */
 class SecureFileReceiveActivity : Activity() {
     companion object {
+        const val EXTRA_INBOX_NAME = "inbox_name"
         private const val PICK_OUTPUT_TREE = 6201
         private const val OPEN_DIR = "secure_open"
         private const val OPEN_FILE_MAX_AGE_MS = 10 * 60 * 1000L
@@ -47,6 +48,7 @@ class SecureFileReceiveActivity : Activity() {
     private lateinit var saveBtn: Button
     private val names = mutableListOf<String>()
     private var inputUri: android.net.Uri? = null
+    private var inboxFile: File? = null
     private var pendingFilename = "decrypted_file"
     private var pendingTempPath: String? = null
     private var openedExternally = false
@@ -72,7 +74,12 @@ class SecureFileReceiveActivity : Activity() {
         saveBtn.setOnClickListener { launchOutputPicker() }
         findViewById<Button>(R.id.receive_close_btn).setOnClickListener { finish() }
 
-        inputUri = SecurityIntentValidator.encryptedFileUri(intent, packageName)
+        // V53: a file that arrived as chat text (SKFT1:) was rebuilt by the keyboard into this app's own
+        // inbox; only a plain file NAME is accepted here and it must resolve inside that inbox.
+        FileTextTransport.purgeOld(this)
+        inboxFile = FileTextTransport.resolveInbox(this, intent.getStringExtra(EXTRA_INBOX_NAME))
+        inputUri = inboxFile?.let { android.net.Uri.fromFile(it) }
+            ?: SecurityIntentValidator.encryptedFileUri(intent, packageName)
         if (inputUri == null) {
             statusText.text = "رابط أو ملف غير صالح"
             decryptBtn.isEnabled = false
@@ -326,11 +333,12 @@ class SecureFileReceiveActivity : Activity() {
         previewImage.setImageDrawable(null)
         // If a viewer app was launched, leave the file for it; the age-based purge removes it later.
         if (!openedExternally) cleanupTemp()
+        if (isFinishing) inboxFile?.delete()
         super.onDestroy()
     }
 
     private fun queryDisplayName(uri: android.net.Uri?): String? {
-        if (uri == null) return null
+        if (uri == null || uri.scheme != "content") return null
         contentResolver.query(uri, arrayOf("_display_name"), null, null, null)?.use { c ->
             if (c.moveToFirst()) {
                 val i = c.getColumnIndex("_display_name")

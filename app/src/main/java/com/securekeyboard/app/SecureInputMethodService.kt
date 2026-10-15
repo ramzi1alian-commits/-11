@@ -260,6 +260,8 @@ class SecureInputMethodService : InputMethodService() {
     // to the focused chat app as content (WhatsApp can render it as an attachment).
     private var selectedAttachmentUri: Uri? = null
     private var selectedAttachmentName: String = ""
+    /** V53 optional extra: send the encrypted file as chat text (off unless the user turns it on). */
+    private var sendFileAsText: Boolean = false
     private var selectedAttachmentMime: String = "application/octet-stream"
 
     private val attachmentReceiver = object : BroadcastReceiver() {
@@ -1116,6 +1118,21 @@ class SecureInputMethodService : InputMethodService() {
             box.addView(chip, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dpToPx(6f), dpToPx(4f), dpToPx(6f), dpToPx(2f)) })
+            // V53: optional extra - send this file as text inside the chat (small files only).
+            val asText = TextView(this).apply {
+                text = if (sendFileAsText) "🔤 إرسال كنصّ داخل المحادثة: مفعّل — اضغط للإيقاف"
+                       else "🔤 إرسال كنصّ داخل المحادثة (ميزة إضافية للملفات الصغيرة) — اضغط للتفعيل"
+                setTextColor(if (sendFileAsText) accent else Prefs.palette(this@SecureInputMethodService).textSecondary)
+                textSize = 11f
+                gravity = Gravity.CENTER
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                textDirection = View.TEXT_DIRECTION_RTL
+                setPadding(dpToPx(8f), dpToPx(3f), dpToPx(8f), dpToPx(3f))
+                setOnClickListener { sendFileAsText = !sendFileAsText; rebuildKeyboardView() }
+            }
+            box.addView(asText, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dpToPx(6f), 0, dpToPx(6f), dpToPx(2f)) })
         }
         box.addView(preview)
         val previewScroll = ScrollView(this).apply {
@@ -1321,36 +1338,58 @@ class SecureInputMethodService : InputMethodService() {
                     cryptoBusy = false
                     cryptoStatusView?.text = "✓ تم تشفير الملف — جارٍ إرفاق النسخة المشفّرة…"
                     val ic = currentInputConnection
-                    if (ic == null || android.os.Build.VERSION.SDK_INT < 25) {
-                        // Direct insertion is not available here: hand the encrypted copy to the
-                        // system share sheet instead (choose WhatsApp, then press its Send).
-                        shareEncryptedAttachment(outFile!!, displayName)
+                    val targetPkg = currentInputEditorInfo?.packageName
+                    // V53 optional extra: send the encrypted file as chat text. Only when the user
+                    // switched it on AND it fits the chat app's message limit; otherwise the normal
+                    // (unchanged) commit/share path below runs.
+                    if (sendFileAsText) {
+                        if (ic != null && FileTextTransport.fits(outFile!!, targetPkg)) {
+                            val token = try { FileTextTransport.encode(outFile!!) } catch (e: Exception) { null }
+                            if (token != null && ic.commitText(token, 1)) {
+                                outFile!!.delete()
+                                selectedAttachmentUri = null
+                                selectedAttachmentName = ""
+                                sendFileAsText = false
+                                cryptoStatusView?.text = "✓ أُدرج الملف المشفّر كنصّ — اضغط إرسال"
+                                showCryptoNotice("أُدرج الملف المشفّر كنصّ في المحادثة — اضغط إرسال. الأصل محفوظ.")
+                                rebuildKeyboardView()
+                                return@post
+                            }
+                        } else {
+                            showCryptoNotice("الملف كبير لإرساله كنصّ في هذا التطبيق — سيُرسل بالطريقة العادية")
+                        }
+                    }
+                    // commitContent only works if the focused editor ADVERTISES a matching MIME type.
+                    // WhatsApp/Telegram advertise images/GIFs/stickers only, never arbitrary files, so
+                    // do not even try (V52): go straight to a one-tap share aimed at the chat app.
+                    val editorAccepts = try {
+                        ic != null && android.os.Build.VERSION.SDK_INT >= 25 &&
+                            androidx.core.view.inputmethod.EditorInfoCompat
+                                .getContentMimeTypes(currentInputEditorInfo ?: EditorInfo())
+                                .any { android.content.ClipDescription.compareMimeTypes("application/octet-stream", it) }
+                    } catch (e: Exception) { false }
+                    if (!editorAccepts) {
+                        cryptoStatusView?.text = "✓ تم التشفير — اختر المحادثة في واتساب ثم اضغط إرسال"
+                        shareEncryptedAttachment(outFile!!, displayName, targetPkg)
                         return@post
                     }
                     try {
                         val providerUri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", outFile!!)
-                        grantUriPermission(packageName, providerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         val info = InputContentInfo(providerUri, android.content.ClipDescription(displayName, arrayOf("application/octet-stream")), null)
                         val flags = InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION
-                        val accepted = ic.commitContent(info, flags, null)
+                        val accepted = ic!!.commitContent(info, flags, null)
                         if (!accepted) {
-                            // Many chat editors do not advertise application/octet-stream
-                            // through commitContent even though they can receive files
-                            // through the Android Sharesheet. Do not pretend the file was
-                            // sent: fall back to the system share UI so the user can choose
-                            // WhatsApp and then press its normal Send button.
-                            cryptoBusy = false
-                            cryptoStatusView?.text = "✓ لم يدعم التطبيق المستهدف الإرفاق المباشر — فُتحت المشاركة لاختيار واتساب"
-                            shareEncryptedAttachment(outFile!!, displayName)
+                            cryptoStatusView?.text = "✓ لم يدعم التطبيق الإرفاق المباشر — فُتحت المشاركة"
+                            shareEncryptedAttachment(outFile!!, displayName, targetPkg)
                         } else {
-                            cryptoStatusView?.text = "✓ تم إدراج الملف المشفّر — اضغط إرسال في واتساب لإرساله"
-                            showCryptoNotice("تم إدراج الملف المشفّر في المحادثة — اضغط إرسال في واتساب لإرساله، والأصل محفوظ")
+                            cryptoStatusView?.text = "✓ تم إدراج الملف المشفّر — اضغط إرسال لإرساله"
+                            showCryptoNotice("تم إدراج الملف المشفّر في المحادثة — اضغط إرسال، والأصل محفوظ")
                             selectedAttachmentUri = null
                             selectedAttachmentName = ""
                             rebuildKeyboardView()
                         }
                     } catch (e: Exception) {
-                        showCryptoNotice("تعذر إرفاق الملف المشفّر: ${e.message ?: "خطأ"}")
+                        shareEncryptedAttachment(outFile!!, displayName, targetPkg)
                     }
                 }
             } catch (e: Exception) {
@@ -1366,19 +1405,33 @@ class SecureInputMethodService : InputMethodService() {
         }
     }
 
-    private fun shareEncryptedAttachment(file: java.io.File, originalName: String) {
+    /** Hands the encrypted copy to the chat app the keyboard is typing in. The Android keyboard API cannot
+     * drop an arbitrary file into a WhatsApp chat, so: (1) explicit share straight to that app (one tap to
+     * pick the chat, no system chooser), (2) fall back to the normal chooser. */
+    private fun shareEncryptedAttachment(file: java.io.File, originalName: String, targetPkg: String? = null) {
         try {
             val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-            val share = Intent(Intent.ACTION_SEND).apply {
+            fun build() = Intent(Intent.ACTION_SEND).apply {
                 type = "application/octet-stream"
-                setDataAndType(uri, "application/octet-stream")
                 putExtra(Intent.EXTRA_STREAM, uri)
                 clipData = android.content.ClipData.newRawUri("SecureKeyboard encrypted file", uri)
-                putExtra(Intent.EXTRA_TEXT, "SecureKeyboard — ملف مشفّر: $originalName")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            startActivity(Intent.createChooser(share, "اختر التطبيق لإرسال الملف المشفّر").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            showCryptoNotice("اختر واتساب من المشاركة ثم اضغط إرسال. الملف الأصلي محفوظ.")
+            val known = setOf("com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "org.telegram.messenger.web",
+                "org.thoughtcrime.securesms", "com.viber.voip", "com.facebook.orca")
+            if (targetPkg != null && targetPkg in known) {
+                try {
+                    grantUriPermission(targetPkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    startActivity(build().setPackage(targetPkg))
+                    showCryptoNotice("اختر المحادثة ثم اضغط إرسال. الملف الأصلي محفوظ.")
+                    selectedAttachmentUri = null
+                    selectedAttachmentName = ""
+                    rebuildKeyboardView()
+                    return
+                } catch (e: Exception) { /* fall through to chooser */ }
+            }
+            startActivity(Intent.createChooser(build(), "اختر التطبيق لإرسال الملف المشفّر").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            showCryptoNotice("اختر التطبيق ثم المحادثة ثم إرسال. الملف الأصلي محفوظ.")
         } catch (e: Exception) {
             showCryptoNotice("تعذر فتح مشاركة الملف المشفّر: ${e.message ?: "خطأ"}")
         }
@@ -1433,6 +1486,31 @@ class SecureInputMethodService : InputMethodService() {
         }
     }
 
+    /** V53: if the clipboard holds a file sent as text (SKFT1:), rebuild the encrypted file and open the
+     * normal secure receive screen. Returns true when it handled the clipboard. */
+    private fun tryOpenFileFromClipboard(): Boolean {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+        val text = try {
+            val c = cm?.primaryClip
+            if (c != null && c.itemCount > 0) c.getItemAt(0).coerceToText(this)?.toString() else null
+        } catch (_: Exception) { null }
+        if (!FileTextTransport.isToken(text)) return false
+        showCryptoNotice("جارٍ فتح الملف المشفّر…")
+        cryptoExecutor.execute {
+            val name = try { FileTextTransport.decodeToInbox(this, text!!) } catch (_: Exception) { null }
+            mainHandler.post {
+                if (name == null) {
+                    showCryptoNotice("نصّ الملف المشفّر ناقص أو تالف (ربما قُطع عند النسخ) — انسخ الرسالة كاملة")
+                } else {
+                    startActivity(Intent(this, SecureFileReceiveActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(SecureFileReceiveActivity.EXTRA_INBOX_NAME, name))
+                }
+            }
+        }
+        return true
+    }
+
     /**
      * Same clipboard-decrypt logic as decryptClipboard() below, but for
      * use from INSIDE secure-compose mode: shows the result on this same
@@ -1444,6 +1522,7 @@ class SecureInputMethodService : InputMethodService() {
      */
     private fun decryptClipboardInPlace() {
         if (cryptoBusy) return
+        if (tryOpenFileFromClipboard()) return
         val passphrase = SessionKeyStore.get()
         if (passphrase == null) {
             showCryptoNotice(R.string.crypto_panel_no_session)
@@ -1587,6 +1666,7 @@ class SecureInputMethodService : InputMethodService() {
      */
     private fun decryptClipboard() {
         if (cryptoBusy) return
+        if (tryOpenFileFromClipboard()) return
         SessionKeyStore.initialize(this)
         val passphrase = SessionKeyStore.get()
         if (passphrase == null) {
