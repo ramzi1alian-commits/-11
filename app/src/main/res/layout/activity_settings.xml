@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/navy_950">
+    android:background="?attr/skBg">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -29,7 +29,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:text="@string/app_name"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="22sp"
                 android:textStyle="bold" />
 
@@ -38,7 +38,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="@string/app_tagline"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp" />
         </LinearLayout>
 
@@ -53,7 +53,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/setup_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -63,7 +63,7 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp"
                 android:text="@string/setup_explainer"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
 
@@ -93,7 +93,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/encrypt_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -103,7 +103,7 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp"
                 android:text="@string/encrypt_card_desc"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
 
@@ -128,7 +128,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="13sp"
             android:lineSpacingExtra="4dp" />
 
@@ -151,7 +151,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/learned_words_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -161,7 +161,7 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp"
                 android:text="@string/learned_words_desc"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
 
@@ -184,7 +184,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/learned_phrases_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -194,7 +194,7 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp"
                 android:text="@string/learned_phrases_desc"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
 
@@ -224,7 +224,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="@string/fips_title"
-                    android:textColor="@color/white"
+                    android:textColor="?attr/skText"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
@@ -239,7 +239,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/fips_desc"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
         </LinearLayout>
@@ -262,7 +262,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="@string/autocorrect_title"
-                    android:textColor="@color/white"
+                    android:textColor="?attr/skText"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
@@ -277,7 +277,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/autocorrect_desc"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
         </LinearLayout>
@@ -293,7 +293,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/backup_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -303,7 +303,7 @@
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="16dp"
                 android:text="@string/backup_desc"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
 

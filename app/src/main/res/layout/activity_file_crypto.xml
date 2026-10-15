@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/navy_950"
+    android:background="?attr/skBg"
     android:fillViewport="true">
     <LinearLayout
         android:layout_width="match_parent"
@@ -14,7 +14,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/file_crypto_title"
-            android:textColor="@color/white"
+            android:textColor="?attr/skText"
             android:textSize="21sp"
             android:textStyle="bold" />
 
@@ -24,7 +24,7 @@
             android:layout_marginTop="6dp"
             android:layout_marginBottom="18dp"
             android:text="@string/file_crypto_desc"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="13sp"
             android:lineSpacingExtra="3dp" />
 
@@ -32,7 +32,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/file_contact_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="13sp" />
 
         <Spinner
@@ -50,15 +50,23 @@
             android:layout_height="46dp"
             android:text="@string/file_add_contact" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/file_choose"
+            style="@style/PrimaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="18dp"
+            android:text="📂 اختيار ملف" />
+
         <TextView
             android:id="@+id/file_selected_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="8dp"
             android:padding="14dp"
             android:background="@drawable/bg_input"
             android:text="@string/file_none_selected"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:maxLines="3"
             android:ellipsize="middle" />
 
@@ -85,18 +93,35 @@
             android:layout_marginTop="16dp"
             android:padding="12dp"
             android:background="@drawable/bg_card"
-            android:text="@string/file_session_inactive"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="12sp"
             android:lineSpacingExtra="3dp" />
 
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/file_open_encrypt"
+            android:id="@+id/file_share"
             style="@style/SecondaryButton"
             android:layout_width="match_parent"
             android:layout_height="46dp"
             android:layout_marginTop="10dp"
-            android:text="@string/file_open_encrypt"
+            android:text="📤 مشاركة (واتساب وغيره)"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/file_save"
+            style="@style/SecondaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:layout_marginTop="8dp"
+            android:text="💾 حفظ نسخة في الجهاز"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/file_open"
+            style="@style/SecondaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:layout_marginTop="8dp"
+            android:text="👁 فتح الملف"
             android:visibility="gone" />
 
     </LinearLayout>

@@ -3,6 +3,6 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:padding="14dp"
-    android:background="@color/navy_800"
-    android:textColor="@color/slate_200"
+    android:background="?attr/skSurface2"
+    android:textColor="?attr/skText"
     android:textSize="14sp" />

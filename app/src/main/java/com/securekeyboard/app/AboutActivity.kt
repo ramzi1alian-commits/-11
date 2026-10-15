@@ -16,6 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 class AboutActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeUtil.applyTo(this)
         super.onCreate(savedInstanceState)
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,

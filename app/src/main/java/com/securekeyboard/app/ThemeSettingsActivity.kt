@@ -16,8 +16,8 @@ class ThemeSettingsActivity : AppCompatActivity() {
     private lateinit var swatchPurple: View
     private lateinit var swatchSecureGreen: View
 
-    private lateinit var btnDayMode: MaterialButton
-    private lateinit var btnNightMode: MaterialButton
+    private lateinit var themeGrid: android.widget.LinearLayout
+    private lateinit var btnAccentAuto: MaterialButton
     private lateinit var btnFontSans: MaterialButton
     private lateinit var btnFontSerif: MaterialButton
     private lateinit var btnFontMono: MaterialButton
@@ -30,6 +30,7 @@ class ThemeSettingsActivity : AppCompatActivity() {
     private lateinit var previewKeyB: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeUtil.applyTo(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_theme_settings)
 
@@ -39,8 +40,9 @@ class ThemeSettingsActivity : AppCompatActivity() {
         swatchPurple = findViewById(R.id.swatchPurple)
         swatchSecureGreen = findViewById(R.id.swatchSecureGreen)
 
-        btnDayMode = findViewById(R.id.btnDayMode)
-        btnNightMode = findViewById(R.id.btnNightMode)
+        themeGrid = findViewById(R.id.themeGrid)
+        btnAccentAuto = findViewById(R.id.btnAccentAuto)
+        btnAccentAuto.setOnClickListener { Prefs.clearAccent(this); recreate() }
         btnFontSans = findViewById(R.id.btnFontSans)
         btnFontSerif = findViewById(R.id.btnFontSerif)
         btnFontMono = findViewById(R.id.btnFontMono)
@@ -57,21 +59,6 @@ class ThemeSettingsActivity : AppCompatActivity() {
         swatchGold.setOnClickListener { pickAccent(R.color.accent_gold) }
         swatchPurple.setOnClickListener { pickAccent(R.color.accent_purple) }
         swatchSecureGreen.setOnClickListener { pickAccent(R.color.accent_secure_green) }
-
-        btnDayMode.setOnClickListener {
-            Prefs.setDarkMode(this, false)
-            // setDefaultNightMode recreates any *other* running activities
-            // automatically, but this screen itself needs an explicit
-            // recreate() to reliably pick up the new day/night resources
-            // right away on every OS version/OEM skin.
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-            recreate()
-        }
-        btnNightMode.setOnClickListener {
-            Prefs.setDarkMode(this, true)
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-            recreate()
-        }
 
         btnFontSans.setOnClickListener { Prefs.setFontChoice(this, 0); recreate() }
         btnFontSerif.setOnClickListener { Prefs.setFontChoice(this, 1); recreate() }
@@ -143,9 +130,8 @@ class ThemeSettingsActivity : AppCompatActivity() {
         ThemeUtil.setSelected(swatchPurple, selectedAccentRes == R.color.accent_purple, accent)
         ThemeUtil.setSelected(swatchSecureGreen, selectedAccentRes == R.color.accent_secure_green, accent)
 
-        val isDark = Prefs.isDarkMode(this)
-        ThemeUtil.setSelected(btnDayMode, !isDark, accent)
-        ThemeUtil.setSelected(btnNightMode, isDark, accent)
+        ThemeUtil.setSelected(btnAccentAuto, Prefs.accentIsAuto(this), accent)
+        buildThemeCards(accent)
 
         val font = Prefs.fontChoice(this)
         ThemeUtil.setSelected(btnFontSans, font == 0, accent)
@@ -157,5 +143,64 @@ class ThemeSettingsActivity : AppCompatActivity() {
         ThemeUtil.setSelected(btnComfortable, density == 0, accent)
 
         updateHeightPreview(Prefs.keyboardHeightDp(this))
+    }
+
+    /** One card per theme: a mini preview (background / surface / accent) plus its name, two per row. */
+    private fun buildThemeCards(accent: Int) {
+        themeGrid.removeAllViews()
+        val d = resources.displayMetrics.density
+        val current = Prefs.themeId(this)
+        var row: android.widget.LinearLayout? = null
+        Themes.all.forEachIndexed { i, p ->
+            if (i % 2 == 0) {
+                row = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.HORIZONTAL }
+                themeGrid.addView(row, android.widget.LinearLayout.LayoutParams(-1, -2))
+            }
+            val card = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                setPadding((10 * d).toInt(), (10 * d).toInt(), (10 * d).toInt(), (10 * d).toInt())
+                isClickable = true
+                isFocusable = true
+                val selected = p.id == current
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 14 * d
+                    setColor(p.bg)
+                    setStroke(((if (selected) 3 else 1) * d).toInt(), if (selected) accent else p.border)
+                }
+                setOnClickListener {
+                    Prefs.setThemeId(this@ThemeSettingsActivity, p.id)
+                    Prefs.clearAccent(this@ThemeSettingsActivity)
+                    recreate()
+                }
+            }
+            val preview = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER
+            }
+            for (c in intArrayOf(p.surface, p.surface2, p.accent)) {
+                val dot = View(this).apply {
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(c)
+                        setStroke((1 * d).toInt(), p.border)
+                    }
+                }
+                preview.addView(dot, android.widget.LinearLayout.LayoutParams((22 * d).toInt(), (22 * d).toInt()).apply {
+                    setMargins((3 * d).toInt(), 0, (3 * d).toInt(), 0)
+                })
+            }
+            card.addView(preview)
+            card.addView(TextView(this).apply {
+                text = (if (p.id == current) "✓ " else "") + getString(p.nameRes)
+                setTextColor(p.text)
+                textSize = 14f
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, (8 * d).toInt(), 0, 0)
+            })
+            row!!.addView(card, android.widget.LinearLayout.LayoutParams(0, -2, 1f).apply {
+                setMargins((5 * d).toInt(), (5 * d).toInt(), (5 * d).toInt(), (5 * d).toInt())
+            })
+        }
     }
 }

@@ -1,5 +1,11 @@
 <resources>
     <style name="AppTheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="skBg">#F4F7FB</item>
+        <item name="skSurface">#FFFFFF</item>
+        <item name="skSurface2">#EEF2F7</item>
+        <item name="skBorder">#CBD5E1</item>
+        <item name="skTextSecondary">#64748B</item>
+        <item name="skText">#0F172A</item>
         <item name="android:windowNoTitle">true</item>
         <item name="colorPrimary">@color/navy_900</item>
         <item name="colorPrimaryDark">@color/navy_950</item>
@@ -13,6 +19,12 @@
     </style>
 
     <style name="AppTheme.PopupCompose" parent="Theme.MaterialComponents.DayNight.Dialog">
+        <item name="skBg">#F4F7FB</item>
+        <item name="skSurface">#FFFFFF</item>
+        <item name="skSurface2">#EEF2F7</item>
+        <item name="skBorder">#CBD5E1</item>
+        <item name="skTextSecondary">#64748B</item>
+        <item name="skText">#0F172A</item>
         <item name="android:windowNoTitle">true</item>
         <item name="colorPrimary">@color/navy_900</item>
         <item name="colorPrimaryDark">@color/navy_950</item>
@@ -44,8 +56,8 @@
     </style>
 
     <style name="SecondaryButton" parent="Widget.MaterialComponents.Button.OutlinedButton">
-        <item name="strokeColor">@color/navy_700</item>
-        <item name="android:textColor">@color/slate_200</item>
+        <item name="strokeColor">?attr/skBorder</item>
+        <item name="android:textColor">?attr/skText</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:textSize">14sp</item>
         <item name="cornerRadius">14dp</item>
@@ -54,8 +66,8 @@
     <style name="InputField">
         <item name="android:background">@drawable/bg_input</item>
         <item name="android:padding">14dp</item>
-        <item name="android:textColor">@color/slate_200</item>
-        <item name="android:textColorHint">@color/slate_400</item>
+        <item name="android:textColor">?attr/skText</item>
+        <item name="android:textColorHint">?attr/skTextSecondary</item>
         <item name="android:textSize">14sp</item>
     </style>
 
@@ -81,7 +93,7 @@
     <style name="SwatchLabel">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:textColor">@color/slate_200</item>
+        <item name="android:textColor">?attr/skText</item>
         <item name="android:textSize">14sp</item>
     </style>
     <style name="ScannerTheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
@@ -94,4 +106,214 @@
         <item name="android:textColorPrimary">@color/white</item>
     </style>
 
+
+    <style name="SkTheme.Day" parent="">
+        <item name="skBg">#F4F7FB</item>
+        <item name="skSurface">#FFFFFF</item>
+        <item name="skSurface2">#EEF2F7</item>
+        <item name="skBorder">#CBD5E1</item>
+        <item name="skTextSecondary">#64748B</item>
+        <item name="skText">#0F172A</item>
+        <item name="android:windowBackground">#F4F7FB</item>
+        <item name="android:colorBackground">#F4F7FB</item>
+        <item name="android:textColorPrimary">#0F172A</item>
+        <item name="android:textColorSecondary">#64748B</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#0F172A</item>
+        <item name="colorPrimary">#FFFFFF</item>
+        <item name="colorAccent">#0891B2</item>
+        <item name="android:statusBarColor">#F4F7FB</item>
+        <item name="android:navigationBarColor">#F4F7FB</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="SkTheme.Night" parent="">
+        <item name="skBg">#0B1020</item>
+        <item name="skSurface">#111A33</item>
+        <item name="skSurface2">#18233F</item>
+        <item name="skBorder">#2A3A66</item>
+        <item name="skTextSecondary">#9FB0D6</item>
+        <item name="skText">#EAF0FF</item>
+        <item name="android:windowBackground">#0B1020</item>
+        <item name="android:colorBackground">#0B1020</item>
+        <item name="android:textColorPrimary">#EAF0FF</item>
+        <item name="android:textColorSecondary">#9FB0D6</item>
+        <item name="colorSurface">#111A33</item>
+        <item name="colorOnSurface">#EAF0FF</item>
+        <item name="colorPrimary">#111A33</item>
+        <item name="colorAccent">#5AA9FF</item>
+        <item name="android:statusBarColor">#0B1020</item>
+        <item name="android:navigationBarColor">#0B1020</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="SkTheme.Dark" parent="">
+        <item name="skBg">#000000</item>
+        <item name="skSurface">#0D0D0D</item>
+        <item name="skSurface2">#1A1A1A</item>
+        <item name="skBorder">#2E2E2E</item>
+        <item name="skTextSecondary">#A3A3A3</item>
+        <item name="skText">#F5F5F5</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:textColorPrimary">#F5F5F5</item>
+        <item name="android:textColorSecondary">#A3A3A3</item>
+        <item name="colorSurface">#0D0D0D</item>
+        <item name="colorOnSurface">#F5F5F5</item>
+        <item name="colorPrimary">#0D0D0D</item>
+        <item name="colorAccent">#69FF46</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="SkTheme.Light" parent="">
+        <item name="skBg">#FFFFFF</item>
+        <item name="skSurface">#F8F8F8</item>
+        <item name="skSurface2">#F0F0F0</item>
+        <item name="skBorder">#DADADA</item>
+        <item name="skTextSecondary">#6B7280</item>
+        <item name="skText">#111111</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:colorBackground">#FFFFFF</item>
+        <item name="android:textColorPrimary">#111111</item>
+        <item name="android:textColorSecondary">#6B7280</item>
+        <item name="colorSurface">#F8F8F8</item>
+        <item name="colorOnSurface">#111111</item>
+        <item name="colorPrimary">#F8F8F8</item>
+        <item name="colorAccent">#2563EB</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="SkTheme.Gold" parent="">
+        <item name="skBg">#0F0B04</item>
+        <item name="skSurface">#1A1408</item>
+        <item name="skSurface2">#261D0B</item>
+        <item name="skBorder">#5A4410</item>
+        <item name="skTextSecondary">#C9B27A</item>
+        <item name="skText">#FFF3CF</item>
+        <item name="android:windowBackground">#0F0B04</item>
+        <item name="android:colorBackground">#0F0B04</item>
+        <item name="android:textColorPrimary">#FFF3CF</item>
+        <item name="android:textColorSecondary">#C9B27A</item>
+        <item name="colorSurface">#1A1408</item>
+        <item name="colorOnSurface">#FFF3CF</item>
+        <item name="colorPrimary">#1A1408</item>
+        <item name="colorAccent">#F0B94A</item>
+        <item name="android:statusBarColor">#0F0B04</item>
+        <item name="android:navigationBarColor">#0F0B04</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="SkTheme.Gray" parent="">
+        <item name="skBg">#2B2E33</item>
+        <item name="skSurface">#363A40</item>
+        <item name="skSurface2">#40444B</item>
+        <item name="skBorder">#585D66</item>
+        <item name="skTextSecondary">#B5BAC4</item>
+        <item name="skText">#F1F3F5</item>
+        <item name="android:windowBackground">#2B2E33</item>
+        <item name="android:colorBackground">#2B2E33</item>
+        <item name="android:textColorPrimary">#F1F3F5</item>
+        <item name="android:textColorSecondary">#B5BAC4</item>
+        <item name="colorSurface">#363A40</item>
+        <item name="colorOnSurface">#F1F3F5</item>
+        <item name="colorPrimary">#363A40</item>
+        <item name="colorAccent">#8AB4F8</item>
+        <item name="android:statusBarColor">#2B2E33</item>
+        <item name="android:navigationBarColor">#2B2E33</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="SkTheme.Emerald" parent="">
+        <item name="skBg">#06140F</item>
+        <item name="skSurface">#0B2219</item>
+        <item name="skSurface2">#11301F</item>
+        <item name="skBorder">#1F5C40</item>
+        <item name="skTextSecondary">#9AD6BA</item>
+        <item name="skText">#E6FFF3</item>
+        <item name="android:windowBackground">#06140F</item>
+        <item name="android:colorBackground">#06140F</item>
+        <item name="android:textColorPrimary">#E6FFF3</item>
+        <item name="android:textColorSecondary">#9AD6BA</item>
+        <item name="colorSurface">#0B2219</item>
+        <item name="colorOnSurface">#E6FFF3</item>
+        <item name="colorPrimary">#0B2219</item>
+        <item name="colorAccent">#34D399</item>
+        <item name="android:statusBarColor">#06140F</item>
+        <item name="android:navigationBarColor">#06140F</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="SkTheme.Ocean" parent="">
+        <item name="skBg">#E8F6FA</item>
+        <item name="skSurface">#FFFFFF</item>
+        <item name="skSurface2">#D7EEF5</item>
+        <item name="skBorder">#A5D4E2</item>
+        <item name="skTextSecondary">#3E6B7B</item>
+        <item name="skText">#0A2A36</item>
+        <item name="android:windowBackground">#E8F6FA</item>
+        <item name="android:colorBackground">#E8F6FA</item>
+        <item name="android:textColorPrimary">#0A2A36</item>
+        <item name="android:textColorSecondary">#3E6B7B</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#0A2A36</item>
+        <item name="colorPrimary">#FFFFFF</item>
+        <item name="colorAccent">#0E7490</item>
+        <item name="android:statusBarColor">#E8F6FA</item>
+        <item name="android:navigationBarColor">#E8F6FA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="SkTheme.Royal" parent="">
+        <item name="skBg">#140B24</item>
+        <item name="skSurface">#1E1236</item>
+        <item name="skSurface2">#2A1B4A</item>
+        <item name="skBorder">#4C3380</item>
+        <item name="skTextSecondary">#BBA7E8</item>
+        <item name="skText">#F3ECFF</item>
+        <item name="android:windowBackground">#140B24</item>
+        <item name="android:colorBackground">#140B24</item>
+        <item name="android:textColorPrimary">#F3ECFF</item>
+        <item name="android:textColorSecondary">#BBA7E8</item>
+        <item name="colorSurface">#1E1236</item>
+        <item name="colorOnSurface">#F3ECFF</item>
+        <item name="colorPrimary">#1E1236</item>
+        <item name="colorAccent">#B388FF</item>
+        <item name="android:statusBarColor">#140B24</item>
+        <item name="android:navigationBarColor">#140B24</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+    <style name="SkTheme.Sunset" parent="">
+        <item name="skBg">#FFF4EA</item>
+        <item name="skSurface">#FFFFFF</item>
+        <item name="skSurface2">#FFE6D2</item>
+        <item name="skBorder">#F2C5A0</item>
+        <item name="skTextSecondary">#8A5A3C</item>
+        <item name="skText">#3B1D0E</item>
+        <item name="android:windowBackground">#FFF4EA</item>
+        <item name="android:colorBackground">#FFF4EA</item>
+        <item name="android:textColorPrimary">#3B1D0E</item>
+        <item name="android:textColorSecondary">#8A5A3C</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#3B1D0E</item>
+        <item name="colorPrimary">#FFFFFF</item>
+        <item name="colorAccent">#E8590C</item>
+        <item name="android:statusBarColor">#FFF4EA</item>
+        <item name="android:navigationBarColor">#FFF4EA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
 </resources>

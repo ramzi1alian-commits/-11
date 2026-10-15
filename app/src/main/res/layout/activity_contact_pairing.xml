@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/navy_950"
+    android:background="?attr/skBg"
     android:fillViewport="true">
 
     <LinearLayout
@@ -16,7 +16,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/pairing_title"
-            android:textColor="@color/white"
+            android:textColor="?attr/skText"
             android:textSize="21sp"
             android:textStyle="bold"
             android:gravity="center" />
@@ -26,7 +26,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="7dp"
             android:text="@string/pairing_instruction"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="13sp"
             android:lineSpacingExtra="3dp"
             android:gravity="center" />
@@ -39,8 +39,8 @@
             android:hint="@string/pairing_name_hint"
             android:inputType="textCapSentences"
             android:background="@drawable/bg_input"
-            android:textColor="@color/slate_200"
-            android:textColorHint="@color/slate_400"
+            android:textColor="?attr/skText"
+            android:textColorHint="?attr/skTextSecondary"
             android:padding="12dp" />
 
         <ImageView
@@ -65,7 +65,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
             android:text="@string/pairing_safety_label"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="12sp"
             android:gravity="center" />
 

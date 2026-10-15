@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="skBg" format="color" />
+    <attr name="skSurface" format="color" />
+    <attr name="skSurface2" format="color" />
+    <attr name="skBorder" format="color" />
+    <attr name="skTextSecondary" format="color" />
+    <attr name="skText" format="color" />
+</resources>

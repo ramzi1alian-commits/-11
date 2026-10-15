@@ -143,7 +143,7 @@
     <!-- Contact pairing / device-bound encryption (added) -->
     <string name="recipient_passphrase_only">بدون جهة اتصال (كلمة سر فقط)</string>
     <string name="file_crypto_title">تشفير الملفات الآمن</string>
-    <string name="file_crypto_desc">شفّر الملفات محليًا بجهة اتصال آمنة ومفتاح جلسة مؤقت. لا يتم رفع الملف إلى أي خادم.</string>
+    <string name="file_crypto_desc">شفّر أي ملف بالمفتاح العام لجهة اتصال: لا يفتحه إلا جهازها. لا حاجة لكلمة سر ولا يُرفع الملف إلى أي خادم.</string>
     <string name="file_contact_label">جهة الاتصال الآمنة</string>
     <string name="file_add_contact">＋ إضافة جهة اتصال آمنة</string>
     <string name="file_none_selected">لم يتم اختيار ملف</string>
@@ -190,4 +190,17 @@
     <string name="auto_decrypt_bad_text">⚠️ النص المشفّر غير صالح أو ناقص (ربما قُطع عند النسخ)</string>
     <string name="auto_decrypt_expired">⏳ انتهت صلاحية هذه الرسالة</string>
     <string name="auto_decrypt_replayed">هذه الرسالة فُتحت سابقاً ولم يعد نصها محفوظاً</string>
+
+    <string name="theme_pick_label">الأوضاع (الثيمات)</string>
+    <string name="accent_auto">حسب الثيم</string>
+    <string name="theme_name_day">نهاري</string>
+    <string name="theme_name_night">ليلي</string>
+    <string name="theme_name_dark">داكن</string>
+    <string name="theme_name_light">فاتح</string>
+    <string name="theme_name_gold">ذهبي</string>
+    <string name="theme_name_gray">رمادي</string>
+    <string name="theme_name_emerald">زمردي</string>
+    <string name="theme_name_ocean">محيطي</string>
+    <string name="theme_name_royal">ملكي</string>
+    <string name="theme_name_sunset">غروب</string>
 </resources>

@@ -73,6 +73,22 @@ object ContactCrypto {
         purpose
     )
 
+    /**
+     * v3 file key (pure public-key, no passphrase): HKDF over ECDH(ephemeral, recipient)
+     * bound to both public points. Wipes [sharedSecret]; the caller owns the points.
+     */
+    fun deriveFileKeyV3(sharedSecret: ByteArray, ephemeralPoint: ByteArray, recipientPoint: ByteArray): ByteArray {
+        require(ephemeralPoint.size == 65 && recipientPoint.size == 65) { "invalid identity point" }
+        val salt = "SecureKeyboard-file-salt-v3".toByteArray(Charsets.UTF_8)
+        val label = "SecureKeyboard-file-key-v3".toByteArray(Charsets.UTF_8)
+        val info = label + byteArrayOf(0) + ephemeralPoint + recipientPoint
+        return try {
+            hkdfSha256(salt, sharedSecret, info)
+        } finally {
+            Arrays.fill(sharedSecret, 0); Arrays.fill(salt, 0); Arrays.fill(label, 0); Arrays.fill(info, 0)
+        }
+    }
+
     /** v1 derivation. Wipes [sharedSecret] before returning. Output unchanged from earlier releases. */
     fun deriveFromSharedSecretForInternal(
         sharedSecret: ByteArray,

@@ -3,6 +3,7 @@
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged|typeViewScrolled|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:packageNames="com.whatsapp,com.whatsapp.w4b,org.telegram.messenger,org.telegram.messenger.web,org.thoughtcrime.securesms,com.facebook.orca,com.instagram.android,com.viber.voip,com.discord,com.google.android.apps.messaging,com.samsung.android.messaging,com.android.mms"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="0"
     android:description="@string/auto_decrypt_service_description" />

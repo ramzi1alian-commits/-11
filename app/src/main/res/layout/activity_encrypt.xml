@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/navy_950">
+    android:background="?attr/skBg">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -16,7 +16,7 @@
             android:layout_marginTop="12dp"
             android:layout_marginBottom="4dp"
             android:text="@string/encrypt_title"
-            android:textColor="@color/white"
+            android:textColor="?attr/skText"
             android:textSize="20sp"
             android:textStyle="bold" />
 
@@ -25,7 +25,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
             android:text="@string/encrypt_subtitle"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="13sp" />
 
         <TextView
@@ -45,7 +45,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="6dp"
             android:text="@string/text_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="13sp" />
 
         <!--
@@ -79,7 +79,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="6dp"
             android:text="@string/key_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="13sp" />
 
         <EditText
@@ -98,7 +98,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="12sp" />
 
         <com.google.android.material.button.MaterialButton
@@ -123,7 +123,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:text="@string/session_key_inactive"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="12sp" />
 
         <TextView
@@ -131,7 +131,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="6dp"
             android:text="@string/pairing_title"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="13sp" />
 
         <com.google.android.material.button.MaterialButton
@@ -157,7 +157,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
             android:text="@string/recipient_passphrase_only"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="11sp"
             android:visibility="gone" />
 
@@ -166,7 +166,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="6dp"
             android:text="@string/expiry_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="13sp" />
 
         <Spinner
@@ -195,7 +195,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:text="@string/expiry_warning_note"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="11sp"
             android:lineSpacingExtra="3dp" />
 
@@ -254,7 +254,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="8dp"
                 android:text="@string/result_label"
-                android:textColor="@color/slate_200"
+                android:textColor="?attr/skText"
                 android:textSize="13sp" />
 
             <!--

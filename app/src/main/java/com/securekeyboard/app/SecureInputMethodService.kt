@@ -806,12 +806,11 @@ class SecureInputMethodService : InputMethodService() {
         // the dedicated file tool opens from here, while the paperclip in
         // secure-compose remains the quick attach-and-encrypt path.
         val fileRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fileRow.addView(makeKey("📁 تشفير الملفات", weight = 1f, heightDp = heightDp, accented = sessionActive) {
-            if (!SessionKeyStore.isActive()) {
-                android.widget.Toast.makeText(this@SecureInputMethodService, R.string.crypto_panel_no_session, android.widget.Toast.LENGTH_LONG).show()
-            } else {
-                openSecureFileCrypto()
-            }
+        // Public-key file encryption needs no session passphrase, so this
+        // button always opens the file screen (it used to only show a toast
+        // when no session key was active - that read as "nothing happens").
+        fileRow.addView(makeKey("📁 تشفير الملفات", weight = 1f, heightDp = heightDp, accented = true) {
+            openSecureFileCrypto()
         })
         root.addView(fileRow)
 
@@ -1199,19 +1198,12 @@ class SecureInputMethodService : InputMethodService() {
             android.widget.Toast.makeText(this, "اختر جهة اتصال آمنة أولاً", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        val passphrase = SessionKeyStore.get()
-        if (passphrase == null) {
-            android.widget.Toast.makeText(this, R.string.crypto_panel_no_session, android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
         val keyB64 = ContactStore.getPairedContact(this, contactName)
         if (keyB64.isNullOrBlank()) {
-            java.util.Arrays.fill(passphrase, ' ')
             android.widget.Toast.makeText(this, "مفتاح جهة الاتصال غير موجود", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         val publicKey = try { DeviceIdentity.parseContactPublicKey(keyB64) } catch (e: Exception) {
-            java.util.Arrays.fill(passphrase, ' ')
             android.widget.Toast.makeText(this, "مفتاح جهة الاتصال غير صالح", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
@@ -1225,8 +1217,7 @@ class SecureInputMethodService : InputMethodService() {
             try {
                 val outDir = java.io.File(filesDir, "secure_outbox").apply { mkdirs() }
                 outFile = java.io.File(outDir, "out_${System.currentTimeMillis()}_${displayName.hashCode().toUInt().toString(16)}.skf")
-                val outUri = Uri.fromFile(outFile)
-                SecureFileCrypto.encrypt(this, input, outUri, publicKey, passphrase, displayName)
+                SecureFileCrypto.encryptToFile(this, input, outFile, publicKey, displayName)
                 mainHandler.post {
                     cryptoBusy = false
                     cryptoStatusView?.text = "✓ تم تشفير الملف — جارٍ إرفاق النسخة المشفّرة…"
@@ -1268,8 +1259,6 @@ class SecureInputMethodService : InputMethodService() {
                     cryptoStatusView?.text = "فشل تشفير الملف — ${e.message ?: "خطأ غير معروف"}"
                     android.widget.Toast.makeText(this, "فشل تشفير الملف: ${e.message ?: "خطأ غير معروف"}", android.widget.Toast.LENGTH_LONG).show()
                 }
-            } finally {
-                java.util.Arrays.fill(passphrase, ' ')
             }
         }
     }
@@ -2281,7 +2270,8 @@ class SecureInputMethodService : InputMethodService() {
      * story. Prefs.isDarkMode() is the single source of truth now, so
      * that's what decides whether the keyboard needs rebuilding here too.
      */
-    private fun currentNightMode(): Int = if (Prefs.isDarkMode(this)) 1 else 0
+    private fun currentNightMode(): Int =
+        Themes.all.indexOfFirst { it.id == Prefs.themeId(this) } * 2 + (if (Prefs.accentIsAuto(this)) 1 else 0)
 
     /**
      * Catches the case where the system's dark/light mode changes WHILE

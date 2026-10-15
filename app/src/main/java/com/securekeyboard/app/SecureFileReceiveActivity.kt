@@ -53,6 +53,7 @@ class SecureFileReceiveActivity : Activity() {
     @Volatile private var decrypting = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeUtil.applyTo(this)
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_secure_file_receive)
@@ -71,7 +72,7 @@ class SecureFileReceiveActivity : Activity() {
         saveBtn.setOnClickListener { launchOutputPicker() }
         findViewById<Button>(R.id.receive_close_btn).setOnClickListener { finish() }
 
-        inputUri = SecurityIntentValidator.encryptedFileUri(intent)
+        inputUri = SecurityIntentValidator.encryptedFileUri(intent, packageName)
         if (inputUri == null) {
             statusText.text = "رابط أو ملف غير صالح"
             decryptBtn.isEnabled = false
@@ -81,9 +82,7 @@ class SecureFileReceiveActivity : Activity() {
         refreshSessionStatus()
 
         // Seamless path: nothing to tap when everything needed is already available.
-        if (inputUri != null && names.isNotEmpty() && SessionKeyStore.isActive()) {
-            beginDecrypt()
-        }
+        if (inputUri != null) beginDecrypt()
     }
 
     /** Position 0 is "automatic"; positions 1..n are the paired contacts. */
@@ -91,7 +90,7 @@ class SecureFileReceiveActivity : Activity() {
         names.clear()
         names.addAll(ContactStore.listPairedContactNames(this))
         val labels = if (names.isEmpty()) {
-            listOf("لا توجد جهات اتصال آمنة")
+            listOf("تلقائي")
         } else {
             listOf("تلقائي — تجربة كل جهات الاتصال") + names
         }
@@ -103,9 +102,7 @@ class SecureFileReceiveActivity : Activity() {
     private fun refreshSessionStatus() {
         statusText.text = when {
             inputUri == null -> "لم يتم العثور على ملف مشفر"
-            names.isEmpty() -> "أضف جهة اتصال آمنة أولًا"
-            !SessionKeyStore.isActive() -> "فعّل مفتاح الجلسة أولًا من شاشة التشفير ثم اضغط فك التشفير"
-            else -> "مفتاح الجلسة نشط — متبقي ${SessionKeyStore.remainingMinutes()} دقيقة تقريبًا"
+            else -> "جاهز لفك التشفير بمفتاح هذا الجهاز"
         }
     }
 
@@ -115,23 +112,14 @@ class SecureFileReceiveActivity : Activity() {
             Toast.makeText(this, "لم يتم العثور على الملف المشفر", Toast.LENGTH_LONG).show()
             return
         }
-        if (names.isEmpty()) {
-            Toast.makeText(this, "أضف جهة اتصال آمنة أولًا", Toast.LENGTH_LONG).show()
-            return
-        }
-        if (!SessionKeyStore.isActive()) {
-            Toast.makeText(this, R.string.crypto_panel_no_session, Toast.LENGTH_LONG).show()
-            return
-        }
-        val pass = SessionKeyStore.get() ?: run {
-            Toast.makeText(this, R.string.crypto_panel_no_session, Toast.LENGTH_LONG).show()
-            return
-        }
+        // Current (v3) files need only this device's private key. An active
+        // session passphrase is used only as a fallback for older files.
+        val pass: CharArray? = if (SessionKeyStore.isActive()) SessionKeyStore.get() else null
         val position = contactSpinner.selectedItemPosition
-        val candidates: List<String> = if (position <= 0) {
-            names.toList()
+        val candidates: List<String?> = if (position <= 0) {
+            listOf<String?>(null) + names.toList()   // null = no contact (v3 path) first
         } else {
-            listOfNotNull(names.getOrNull(position - 1))
+            listOf(names.getOrNull(position - 1))
         }
 
         decrypting = true
@@ -143,8 +131,10 @@ class SecureFileReceiveActivity : Activity() {
             try {
                 for (name in candidates) {
                     try {
-                        val contactB64 = ContactStore.getPairedContact(this, name) ?: continue
-                        val publicKey = DeviceIdentity.parseContactPublicKey(contactB64)
+                        val publicKey = if (name == null) null else {
+                            val contactB64 = ContactStore.getPairedContact(this, name) ?: continue
+                            DeviceIdentity.parseContactPublicKey(contactB64)
+                        }
                         val result = SecureFileCrypto.decryptToTemp(this, uri, publicKey, pass)
                         displayName = sanitizeFilename(result.second)
                         opened = moveToOpenDir(result.first, displayName)
@@ -154,7 +144,7 @@ class SecureFileReceiveActivity : Activity() {
                     }
                 }
             } finally {
-                Arrays.fill(pass, '\u0000')
+                pass?.let { Arrays.fill(it, '\u0000') }
             }
             val decrypted = opened
             if (decrypted == null) {
@@ -173,7 +163,12 @@ class SecureFileReceiveActivity : Activity() {
                     selectedText.text = displayName
                     statusText.text = "✓ تم فك التشفير والتحقق من الملف"
                     decryptBtn.visibility = View.GONE
-                    openBtn.visibility = View.VISIBLE
+                    if (SafeFileTypes.isRisky(displayName)) {
+                        openBtn.visibility = View.GONE
+                        statusText.text = "✓ تم فك التشفير — ⚠ ملف قابل للتنفيذ أو نشط (${displayName.substringAfterLast('.')}). لن يُفتح من التطبيق؛ لا تشغّله إلا إن كنت واثقًا بمصدره."
+                    } else {
+                        openBtn.visibility = View.VISIBLE
+                    }
                     saveBtn.visibility = View.VISIBLE
                     if (bitmap != null) {
                         previewImage.setImageBitmap(bitmap)

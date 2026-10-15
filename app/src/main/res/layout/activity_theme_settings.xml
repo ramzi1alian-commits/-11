@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/navy_950">
+    android:background="?attr/skBg">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -16,7 +16,7 @@
             android:layout_marginTop="12dp"
             android:layout_marginBottom="24dp"
             android:text="@string/settings_title"
-            android:textColor="@color/white"
+            android:textColor="?attr/skText"
             android:textSize="20sp"
             android:textStyle="bold" />
 
@@ -25,7 +25,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:text="@string/theme_color_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="15sp"
             android:textStyle="bold" />
 
@@ -61,46 +61,37 @@
             </LinearLayout>
         </GridLayout>
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAccentAuto"
+            style="@style/SecondaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:layout_marginTop="-12dp"
+            android:layout_marginBottom="24dp"
+            android:text="@string/accent_auto" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
-            android:text="@string/display_mode_label"
-            android:textColor="@color/slate_200"
+            android:text="@string/theme_pick_label"
+            android:textColor="?attr/skText"
             android:textSize="15sp"
             android:textStyle="bold" />
 
         <LinearLayout
+            android:id="@+id/themeGrid"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginBottom="24dp">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnDayMode"
-                style="@style/SecondaryButton"
-                android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="8dp"
-                android:text="@string/mode_day" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnNightMode"
-                style="@style/SecondaryButton"
-                android:layout_width="0dp"
-                android:layout_height="52dp"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="@string/mode_night" />
-        </LinearLayout>
+            android:orientation="vertical"
+            android:layout_marginBottom="24dp" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:text="@string/font_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="15sp"
             android:textStyle="bold" />
 
@@ -143,7 +134,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="10dp"
             android:text="@string/density_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="15sp"
             android:textStyle="bold" />
 
@@ -176,7 +167,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="4dp"
             android:text="@string/keyboard_height_label"
-            android:textColor="@color/slate_200"
+            android:textColor="?attr/skText"
             android:textSize="15sp"
             android:textStyle="bold" />
 
@@ -185,7 +176,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="12sp" />
 
         <SeekBar
@@ -212,7 +203,7 @@
                 android:layout_marginEnd="6dp"
                 android:gravity="center"
                 android:text="أ"
-                android:textColor="@color/slate_200"
+                android:textColor="?attr/skText"
                 android:textSize="18sp" />
 
             <TextView
@@ -231,7 +222,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/settings_note"
-            android:textColor="@color/slate_400"
+            android:textColor="?attr/skTextSecondary"
             android:textSize="12sp"
             android:lineSpacingExtra="4dp" />
 

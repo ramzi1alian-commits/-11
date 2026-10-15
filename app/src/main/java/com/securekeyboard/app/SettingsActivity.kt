@@ -57,10 +57,7 @@ class SettingsActivity : AppCompatActivity() {
         // The app owns its display-mode preference. Set AppCompat before the
         // first Activity is created so a fresh install starts in day mode
         // and a returning user gets the mode they previously selected.
-        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
-            if (Prefs.isDarkMode(applicationContext)) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
-            else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
-        )
+        ThemeUtil.applyTo(this)
         super.onCreate(savedInstanceState)
 
         // This screen can show sensitive setup info, so block screenshots here too.

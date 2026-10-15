@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/navy_950">
+    android:background="?attr/skBg">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -15,7 +15,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="20dp"
             android:text="@string/about_title"
-            android:textColor="@color/white"
+            android:textColor="?attr/skText"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -30,7 +30,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/about_section_internet_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -39,7 +39,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/about_section_internet_body"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
         </LinearLayout>
@@ -55,7 +55,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/about_section_dictionaries_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -64,7 +64,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/about_section_dictionaries_body"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
         </LinearLayout>
@@ -80,7 +80,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/about_section_sensitive_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -89,7 +89,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/about_section_sensitive_body"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
         </LinearLayout>
@@ -104,7 +104,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/about_section_control_title"
-                android:textColor="@color/white"
+                android:textColor="?attr/skText"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -113,7 +113,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/about_section_control_body"
-                android:textColor="@color/slate_400"
+                android:textColor="?attr/skTextSecondary"
                 android:textSize="13sp"
                 android:lineSpacingExtra="4dp" />
         </LinearLayout>

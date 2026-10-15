@@ -13,6 +13,7 @@ object Prefs {
     private const val FILE = "secure_keyboard_prefs"
     private const val KEY_ACCENT = "accent_color_name"
     private const val KEY_DARK = "dark_mode"
+    private const val KEY_THEME = "app_theme_id"
     private const val KEY_FONT = "font_choice"
     private const val KEY_DENSITY = "density"
     private const val KEY_KEYBOARD_HEIGHT = "keyboard_height_dp"
@@ -97,19 +98,37 @@ object Prefs {
         return accentNameToRes(pref.getString(KEY_ACCENT, ACCENT_CYAN))
     }
 
+    /** True when the user has not picked a custom accent: the theme's own accent is used. */
+    fun accentIsAuto(context: Context): Boolean = !prefs(context).contains(KEY_ACCENT)
+
     fun setAccentColorRes(context: Context, colorRes: Int) {
         prefs(context).edit()
             .putString(KEY_ACCENT, resToAccentName(colorRes)).apply()
     }
 
-    fun isDarkMode(context: Context): Boolean {
-        val prefs = prefs(context)
-        return prefs.getBoolean(KEY_DARK, false)
+    fun clearAccent(context: Context) {
+        prefs(context).edit().remove(KEY_ACCENT).apply()
     }
 
+    /** Current theme id (see [Themes]). Migrates the old day/night flag on first read. */
+    fun themeId(context: Context): String {
+        val p = prefs(context)
+        val stored = p.getString(KEY_THEME, null)
+        if (stored != null) return Themes.byId(stored).id
+        return if (p.getBoolean(KEY_DARK, false)) "dark" else Themes.DEFAULT_ID
+    }
+
+    fun setThemeId(context: Context, id: String) {
+        prefs(context).edit().putString(KEY_THEME, Themes.byId(id).id).apply()
+    }
+
+    fun palette(context: Context): Palette = Themes.byId(themeId(context))
+
+    /** True for any dark theme (drives AppCompat night mode and the keyboard's rebuild check). */
+    fun isDarkMode(context: Context): Boolean = palette(context).dark
+
     fun setDarkMode(context: Context, dark: Boolean) {
-        prefs(context).edit()
-            .putBoolean(KEY_DARK, dark).apply()
+        setThemeId(context, if (dark) "dark" else "day")
     }
 
     // OFF by default - autocorrect only ever touches a tiny fixed table
@@ -343,30 +362,45 @@ object ThemeUtil {
     }
 
     fun accentColor(context: Context): Int =
-        ContextCompat.getColor(themedContext(context), Prefs.accentColorRes(context))
+        if (Prefs.accentIsAuto(context)) Prefs.palette(context).accent
+        else ContextCompat.getColor(themedContext(context), Prefs.accentColorRes(context))
+
+    fun textColor(context: Context): Int = Prefs.palette(context).text
+
+    fun textSecondaryColor(context: Context): Int = Prefs.palette(context).textSecondary
+
+    /** Readable label color for text drawn on the accent color (picked by luminance). */
+    fun textOnAccentColor(context: Context): Int = onColor(accentColor(context))
+
+    private fun onColor(bg: Int): Int {
+        val r = android.graphics.Color.red(bg) / 255.0
+        val g = android.graphics.Color.green(bg) / 255.0
+        val b = android.graphics.Color.blue(bg) / 255.0
+        val lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return if (lum > 0.5) 0xFF111827.toInt() else 0xFFFFFFFF.toInt()
+    }
 
     /**
-     * The normal (non-accented) label/text color - was being read directly
-     * via `resources.getColor(R.color.slate_200, theme)` in
-     * SecureInputMethodService, which bypasses this object entirely and so
-     * missed the same day/night fix as everything else here. Route it
-     * through here instead so key labels and suggestion-chip text actually
-     * follow Prefs.isDarkMode() too, not just the key/background shapes.
+     * Call at the very top of an Activity.onCreate (before super.onCreate):
+     * applies the chosen palette's theme overlay, window/status/navigation
+     * colors and the matching AppCompat day/night mode.
      */
-    fun textColor(context: Context): Int =
-        ContextCompat.getColor(themedContext(context), R.color.slate_200)
-
-    fun textSecondaryColor(context: Context): Int =
-        ContextCompat.getColor(themedContext(context), R.color.slate_400)
-
-    /** Fixed dark color for text drawn on top of an accent-colored surface - see R.color.text_on_accent. */
-    fun textOnAccentColor(context: Context): Int =
-        ContextCompat.getColor(themedContext(context), R.color.text_on_accent)
+    fun applyTo(activity: android.app.Activity) {
+        val p = Prefs.palette(activity)
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+            if (p.dark) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+        )
+        activity.theme.applyStyle(p.styleRes, true)
+        // Window/status/navigation bar colors come from the SkTheme.* overlay itself.
+    }
 
     /** Tints a filled ("primary") button's background with the current accent. */
     fun tintPrimary(context: Context, vararg buttons: com.google.android.material.button.MaterialButton) {
-        val tint = android.content.res.ColorStateList.valueOf(accentColor(context))
-        buttons.forEach { it.backgroundTintList = tint }
+        val accent = accentColor(context)
+        val tint = android.content.res.ColorStateList.valueOf(accent)
+        val label = onColor(accent)
+        buttons.forEach { it.backgroundTintList = tint; it.setTextColor(label) }
     }
 
     /** Colors an outline ("secondary") button's stroke with the current accent. */
@@ -385,12 +419,11 @@ object ThemeUtil {
      * made color choices look like they weren't being saved.
      */
     fun setSelected(view: android.view.View, selected: Boolean, accent: Int) {
-        val ctx = themedContext(view.context)
         val bg = GradientDrawable()
         bg.cornerRadius = 10f * view.resources.displayMetrics.density
-        bg.setColor(ContextCompat.getColor(ctx, R.color.navy_800))
+        bg.setColor(Prefs.palette(view.context).surface2)
         val strokeWidthDp = if (selected) 2f else 1f
-        val strokeColor = if (selected) accent else ContextCompat.getColor(ctx, R.color.navy_700)
+        val strokeColor = if (selected) accent else Prefs.palette(view.context).border
         bg.setStroke((strokeWidthDp * view.resources.displayMetrics.density).toInt(), strokeColor)
         view.background = bg
     }
@@ -407,17 +440,14 @@ object ThemeUtil {
         accent: Int
     ) {
         val context = button.context
-        val ctx = themedContext(context)
         if (selected) {
             button.strokeWidth = (2 * context.resources.displayMetrics.density).toInt()
             button.strokeColor = android.content.res.ColorStateList.valueOf(accent)
             button.setTextColor(accent)
         } else {
             button.strokeWidth = (1 * context.resources.displayMetrics.density).toInt()
-            button.strokeColor = android.content.res.ColorStateList.valueOf(
-                ContextCompat.getColor(ctx, R.color.navy_700)
-            )
-            button.setTextColor(ContextCompat.getColor(ctx, R.color.slate_200))
+            button.strokeColor = android.content.res.ColorStateList.valueOf(Prefs.palette(context).border)
+            button.setTextColor(Prefs.palette(context).text)
         }
     }
 
@@ -463,29 +493,24 @@ object ThemeUtil {
      * transparent/unreadable on some devices).
      */
     fun keyShapeFillColor(context: Context): Int {
-        val ctx = themedContext(context)
-        return ContextCompat.getColor(ctx, R.color.navy_800)
+        return Prefs.palette(context).surface2
     }
 
     private fun keyShape(context: Context, pressed: Boolean, accented: Boolean): GradientDrawable {
-        val ctx = themedContext(context)
         val density = context.resources.displayMetrics.density
         val bg = GradientDrawable()
         bg.cornerRadius = KEY_CORNER_RADIUS_DP * density
         bg.orientation = GradientDrawable.Orientation.TOP_BOTTOM
         if (pressed) {
-            val pressedColor = ContextCompat.getColor(ctx, R.color.navy_700)
+            val pressedColor = Prefs.palette(context).border
             bg.colors = intArrayOf(pressedColor, pressedColor)
         } else {
             // Subtle surface gradient with clear separation from the keyboard
             // background. The same surface hierarchy is used in both
             // light and dark modes so the keyboard stays calm and premium.
-            bg.colors = intArrayOf(
-                ContextCompat.getColor(ctx, R.color.navy_900),
-                ContextCompat.getColor(ctx, R.color.navy_800)
-            )
+            bg.colors = intArrayOf(Prefs.palette(context).surface, Prefs.palette(context).surface2)
         }
-        val strokeColor = if (accented) accentColor(context) else ContextCompat.getColor(ctx, R.color.navy_700)
+        val strokeColor = if (accented) accentColor(context) else Prefs.palette(context).border
         val strokeWidthDp = if (accented) 1.6f else 1f
         bg.setStroke((strokeWidthDp * density).toInt(), strokeColor)
         return bg
@@ -512,11 +537,10 @@ object ThemeUtil {
      * shadow from [KEY_ELEVATION_DP]-style elevation onto.
      */
     fun suggestionBarBackground(context: Context): Drawable {
-        val ctx = themedContext(context)
         val density = context.resources.displayMetrics.density
         val bg = GradientDrawable()
         bg.cornerRadius = (KEY_CORNER_RADIUS_DP + 2f) * density
-        bg.setColor(ContextCompat.getColor(ctx, R.color.navy_900))
+        bg.setColor(Prefs.palette(context).surface)
         return bg
     }
 
@@ -526,15 +550,14 @@ object ThemeUtil {
      * instead of one run-on strip of text.
      */
     fun suggestionDividerColor(context: Context): Int =
-        ContextCompat.getColor(themedContext(context), R.color.navy_700)
+        Prefs.palette(context).border
 
     private fun pillShape(context: Context, pressed: Boolean): GradientDrawable {
-        val ctx = themedContext(context)
         val density = context.resources.displayMetrics.density
         val bg = GradientDrawable()
         bg.cornerRadius = 999f * density // large enough to always render as a full pill
         bg.setColor(
-            ContextCompat.getColor(ctx, if (pressed) R.color.navy_700 else R.color.navy_800)
+            if (pressed) Prefs.palette(context).border else Prefs.palette(context).surface2
         )
         return bg
     }
@@ -560,7 +583,7 @@ object ThemeUtil {
     /** Flat, slightly darker fill for the whole keyboard surface so raised keys have contrast to sit on. */
     fun keyboardBackground(context: Context): Drawable {
         val bg = GradientDrawable()
-        bg.setColor(ContextCompat.getColor(themedContext(context), R.color.navy_950))
+        bg.setColor(Prefs.palette(context).bg)
         return bg
     }
 }

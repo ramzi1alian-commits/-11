@@ -107,6 +107,7 @@ class EncryptActivity : AppCompatActivity() {
         if (popupMode) {
             setTheme(R.style.AppTheme_PopupCompose)
         }
+        ThemeUtil.applyTo(this)
 
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,

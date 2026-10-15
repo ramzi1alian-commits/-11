@@ -12,7 +12,7 @@ object SecurityIntentValidator {
     private const val SKF_EXTENSION = ".skf"
     private const val OCTET_STREAM = "application/octet-stream"
 
-    fun encryptedFileUri(intent: Intent?): Uri? {
+    fun encryptedFileUri(intent: Intent?, ownPackage: String? = null): Uri? {
         if (intent == null) return null
         val action = intent.action
         if (action != Intent.ACTION_VIEW && action != Intent.ACTION_SEND) return null
@@ -28,7 +28,7 @@ object SecurityIntentValidator {
             else -> null
         } ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
 
-        if (!isAllowedUri(uri)) return null
+        if (!isAllowedUri(uri, ownPackage)) return null
         val safeUri = uri ?: return null
         val mime = intent.type?.lowercase()?.trim()
         val name = safeUri.lastPathSegment?.lowercase()?.trim() ?: ""
@@ -38,11 +38,17 @@ object SecurityIntentValidator {
         return safeUri
     }
 
-    private fun isAllowedUri(uri: Uri?): Boolean {
+    /**
+     * Only content:// URIs from OTHER apps are accepted. file:// is refused
+     * (a hostile sender could point it at this app's private storage), and so
+     * is any URI served by this app's own provider (confused-deputy guard).
+     */
+    private fun isAllowedUri(uri: Uri?, ownPackage: String?): Boolean {
         if (uri == null) return false
-        return when (uri.scheme?.lowercase()) {
-            "content", "file" -> true
-            else -> false
-        }
+        if (uri.scheme?.lowercase() != "content") return false
+        val authority = uri.authority?.lowercase() ?: return false
+        if (ownPackage != null && authority.startsWith(ownPackage.lowercase())) return false
+        if (uri.pathSegments.any { it == ".." }) return false
+        return true
     }
 }
