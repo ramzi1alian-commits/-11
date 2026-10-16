@@ -78,8 +78,15 @@ class AttachmentPickerActivity : Activity() {
         // keyboard encrypts that copy later and deletes it right after. The original is never touched.
         Toast.makeText(this, "جارٍ تجهيز الملف…", Toast.LENGTH_SHORT).show()
         Thread {
-            AttachmentStore.purgeOld(this)
-            val copy = AttachmentStore.copyFrom(this, uri)
+            // V55: nothing in here may throw out of the thread (an uncaught exception would kill the
+            // whole app process, keyboard included) and done() must ALWAYS run so the picker closes.
+            var copy: File? = null
+            try {
+                AttachmentStore.purgeOld(this)
+                copy = AttachmentStore.copyFrom(this, uri)
+            } catch (_: Throwable) {
+                copy = null
+            }
             runOnUiThread {
                 if (copy == null) {
                     Toast.makeText(this, "تعذّر قراءة الملف من مدير الملفات — جرّب اختياره من تطبيق «الملفات» أو مدير آخر", Toast.LENGTH_LONG).show()

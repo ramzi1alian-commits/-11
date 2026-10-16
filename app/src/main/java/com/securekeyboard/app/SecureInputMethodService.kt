@@ -303,15 +303,28 @@ class SecureInputMethodService : InputMethodService() {
     }
 
     private val reshowRunnable = Runnable {
-        try { if (!isInputViewShown) requestShowSelf(0) } catch (_: Exception) {}
+        // V56: no longer guarded by isInputViewShown. After the file picker the IME can believe its view is
+        // "shown" while the window is actually hidden (video: chat cursor blinking, no keyboard for 5+ s),
+        // which made every retry a silent no-op. requestShowSelf is harmless when it is really visible.
+        try { requestShowSelf(0) } catch (_: Exception) {}
+        try {
+            if (currentInputConnection != null && !isInputViewShown) showWindow(true)
+        } catch (_: Exception) {}
     }
 
     /** Re-show the keyboard after the picker closes; retried because the chat window may not have focus yet. */
     private fun scheduleReshow() {
         mainHandler.removeCallbacks(reshowRunnable)
+        // V55: retried a few times - right after the file manager closes the chat window often has
+        // no input focus yet, and a single attempt was sometimes lost (keyboard stayed hidden).
         mainHandler.postDelayed(reshowRunnable, 250L)
+        mainHandler.postDelayed(reshowRunnable, 900L)
+        mainHandler.postDelayed(reshowRunnable, 2000L)
+        mainHandler.postDelayed(reshowRunnable, 3500L)
         mainHandler.postDelayed(reshowRunnable, 800L)
         mainHandler.postDelayed(reshowRunnable, 1600L)
+        mainHandler.postDelayed(reshowRunnable, 5000L)
+        mainHandler.postDelayed(reshowRunnable, 8000L)
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
