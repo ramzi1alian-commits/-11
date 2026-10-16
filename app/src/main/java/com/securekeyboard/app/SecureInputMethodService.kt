@@ -375,9 +375,13 @@ class SecureInputMethodService : InputMethodService() {
     // being rebuilt for a few seconds.
     private var noticeText: CharSequence? = null
     private var noticeUntil = 0L
+    // V59: the secure-compose page shows its notices in the SAME fixed-height slot as the contact line, so
+    // the keyboard no longer grows/shrinks (visible jump) every time a notice appears or disappears.
+    private var composeContactStatusView: TextView? = null
     private val hideNoticeRunnable = Runnable {
         noticeText = null
         cryptoStatusView?.visibility = View.GONE
+        composeContactStatusView?.visibility = View.VISIBLE
     }
 
     private fun showCryptoNotice(resId: Int) = showCryptoNotice(getString(resId))
@@ -402,20 +406,29 @@ class SecureInputMethodService : InputMethodService() {
 
     /** Styles [v] as the notice strip and fills it with the current notice (if still fresh). */
     private fun applyNotice(v: TextView) {
+        val compact = v.tag == "compact_notice"
         v.setTextColor(ThemeUtil.accentColor(this))
-        v.textSize = 13f
+        v.textSize = if (compact) 12f else 13f
         v.gravity = Gravity.CENTER
         v.layoutDirection = View.LAYOUT_DIRECTION_RTL
         v.textDirection = View.TEXT_DIRECTION_RTL
-        v.setPadding(dpToPx(8f), dpToPx(6f), dpToPx(8f), dpToPx(6f))
+        if (compact) {
+            v.setPadding(dpToPx(8f), dpToPx(2f), dpToPx(8f), dpToPx(2f))
+            v.maxLines = 2
+            v.ellipsize = android.text.TextUtils.TruncateAt.END
+        } else {
+            v.setPadding(dpToPx(8f), dpToPx(6f), dpToPx(8f), dpToPx(6f))
+        }
         v.background = ThemeUtil.suggestionBarBackground(this)
         val t = noticeText
         if (t != null && android.os.SystemClock.uptimeMillis() < noticeUntil) {
             v.text = t
             v.visibility = View.VISIBLE
+            if (compact) composeContactStatusView?.visibility = View.INVISIBLE
         } else {
             v.text = ""
             v.visibility = View.GONE
+            if (compact) composeContactStatusView?.visibility = View.VISIBLE
         }
     }
 
@@ -513,6 +526,7 @@ class SecureInputMethodService : InputMethodService() {
         // (empty until words get learned in a non-sensitive field - see
         // class doc above and LearnedDictionary.kt).
         WordDictionary.preload(this)
+        EnglishDictionary.preload(this)
         NextWordDictionary.preload(this)
         LearnedDictionary.preload(this)
         PhraseDictionary.preload(this)
@@ -1180,19 +1194,24 @@ class SecureInputMethodService : InputMethodService() {
         })
         root.addView(actionRow)
 
-        val operationStatus = TextView(this)
-        applyNotice(operationStatus)
-        cryptoStatusView = operationStatus
-        root.addView(operationStatus)
-
         val contactStatus = TextView(this).apply {
             text = if (selectedSecureContact == null) "الجهة: غير محددة — تشفير عام بمفتاح الجلسة (بدون اقتران، للنص والملفات)" else "الجهة: 🔐 $selectedSecureContact — تشفير بالمفتاح العام للجهة (نص وملفات)"
             setTextColor(if (selectedSecureContact == null) ThemeUtil.textColor(this@SecureInputMethodService) else ThemeUtil.accentColor(this@SecureInputMethodService))
             textSize = 11f
             gravity = Gravity.CENTER
-            setPadding(0, dpToPx(2f), 0, dpToPx(4f))
+            setPadding(dpToPx(4f), 0, dpToPx(4f), 0)
         }
-        root.addView(contactStatus)
+        composeContactStatusView = contactStatus
+        val operationStatus = TextView(this).apply { tag = "compact_notice" }
+        applyNotice(operationStatus)
+        cryptoStatusView = operationStatus
+        // Fixed-height slot: contact line underneath, notice drawn over it. Height never changes.
+        val statusSlot = android.widget.FrameLayout(this)
+        statusSlot.addView(contactStatus, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
+        statusSlot.addView(operationStatus, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
+        root.addView(statusSlot, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(38f)))
 
         val isArabic = letterMode == LetterMode.ARABIC
         val rows = if (isArabic) {
@@ -1295,6 +1314,9 @@ class SecureInputMethodService : InputMethodService() {
         Prefs.markReturnToSecureCompose(this)
         val intent = Intent(this, AttachmentPickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         selectedSecureContact?.let { intent.putExtra(AttachmentPickerActivity.EXTRA_CONTACT, it) }
+        // V58: lets the picker encrypt and share by itself (see AttachmentPickerActivity INSTANT MODE).
+        currentInputEditorInfo?.packageName?.let { intent.putExtra(AttachmentPickerActivity.EXTRA_TARGET_PKG, it) }
+        intent.putExtra(AttachmentPickerActivity.EXTRA_AS_TEXT, sendFileAsText)
         startActivity(intent)
     }
 
@@ -2689,7 +2711,10 @@ class SecureInputMethodService : InputMethodService() {
             if (out.size >= 5) break
             out.add(Suggestion(word, isPhrase = false))
         }
-        for (word in WordDictionary.suggestionsFor(prefix)) {
+        // V57: English words use the bundled English list, Arabic words the Arabic one.
+        val fixed = if (EnglishDictionary.isLatinPrefix(prefix)) EnglishDictionary.suggestionsFor(prefix)
+                    else WordDictionary.suggestionsFor(prefix)
+        for (word in fixed) {
             if (out.size >= 5) break
             out.add(Suggestion(word, isPhrase = false))
         }

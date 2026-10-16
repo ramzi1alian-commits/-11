@@ -31,6 +31,10 @@ class AttachmentPickerActivity : Activity() {
         const val EXTRA_MIME = "mime"
         // Kept so older callers that still pass the selected contact keep compiling; unused here.
         const val EXTRA_CONTACT = "contact"
+        /** V58: chat app the keyboard was typing in, so the encrypted file can be shared straight to it. */
+        const val EXTRA_TARGET_PKG = "target_pkg"
+        /** V58: the user switched on "send as text", so the instant encrypt+share path is skipped. */
+        const val EXTRA_AS_TEXT = "as_text"
         private const val PICK = 7401
     }
 
@@ -87,7 +91,27 @@ class AttachmentPickerActivity : Activity() {
             } catch (_: Throwable) {
                 copy = null
             }
+            // V58 INSTANT MODE: do not rely on the keyboard re-appearing after this picker closes (on some
+            // phones it never does - screen recordings). While this Activity is still in front it encrypts
+            // the file itself (same SKF2 v3/v4 code, same contact / session key as the keyboard) and opens
+            // WhatsApp's share screen. Any problem -> fall back to the old flow (file chip on the keyboard).
+            var instantFile: File? = null
+            var instantProblem: String? = null
+            if (copy != null && !intent.getBooleanExtra(EXTRA_AS_TEXT, false)) {
+                val r = instantEncrypt(copy, name)
+                instantFile = r.first
+                instantProblem = r.second
+            }
             runOnUiThread {
+                if (instantFile != null) {
+                    shareToChat(instantFile, intent.getStringExtra(EXTRA_TARGET_PKG))
+                    Toast.makeText(this, "✓ تم التشفير — اختر المحادثة ثم اضغط إرسال", Toast.LENGTH_LONG).show()
+                    done(notifyKeyboard = false)
+                    return@runOnUiThread
+                }
+                if (instantProblem != null) {
+                    Toast.makeText(this, instantProblem, Toast.LENGTH_LONG).show()
+                }
                 if (copy == null) {
                     Toast.makeText(this, "تعذّر قراءة الملف من مدير الملفات — جرّب اختياره من تطبيق «الملفات» أو مدير آخر", Toast.LENGTH_LONG).show()
                 }
@@ -109,6 +133,61 @@ class AttachmentPickerActivity : Activity() {
             } catch (_: Exception) {}
         }
         finish()
+    }
+
+    /** Background thread. Returns (encryptedFile, null) or (null, message-for-the-user-or-null). */
+    private fun instantEncrypt(copy: File, name: String): Pair<File?, String?> {
+        return try {
+            val contact = intent.getStringExtra(EXTRA_CONTACT)
+            var pub: java.security.PublicKey? = null
+            var pass: CharArray? = null
+            if (contact.isNullOrBlank()) {
+                try { SessionKeyStore.initialize(this) } catch (_: Throwable) {}
+                pass = SessionKeyStore.get()
+                    ?: return null to "لا يوجد مفتاح جلسة نشط — فعّله من لوحة التشفير في الكيبورد"
+            } else {
+                val kb = ContactStore.getPairedContact(this, contact)
+                if (kb.isNullOrBlank()) return null to "مفتاح جهة الاتصال غير موجود"
+                pub = DeviceIdentity.parseContactPublicKey(kb)
+            }
+            val outDir = File(filesDir, "secure_outbox").apply { mkdirs() }
+            val target = File(outDir, "out_${System.currentTimeMillis()}_${name.hashCode().toUInt().toString(16)}.skf")
+            val src = Uri.fromFile(copy)
+            if (pub != null) {
+                SecureFileCrypto.encryptToFile(this, src, target, pub, name)
+            } else {
+                SecureFileCrypto.encryptWithPassphraseToFile(this, src, target, pass!!, name, Prefs.fipsMode(this))
+            }
+            AttachmentStore.deleteIfOwnCopy(this, src)
+            target to null
+        } catch (e: Throwable) {
+            null to ("تعذّر التشفير: " + (e.message ?: "خطأ"))
+        }
+    }
+
+    /** One tap to pick the chat: explicit share to the chat app, else the normal system chooser. */
+    private fun shareToChat(file: File, targetPkg: String?) {
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            fun build() = Intent(Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newRawUri("SecureKeyboard encrypted file", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val known = setOf("com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "org.telegram.messenger.web",
+                "org.thoughtcrime.securesms", "com.viber.voip", "com.facebook.orca")
+            if (targetPkg != null && targetPkg in known) {
+                try {
+                    grantUriPermission(targetPkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    startActivity(build().setPackage(targetPkg))
+                    return
+                } catch (_: Exception) { /* fall through to chooser */ }
+            }
+            startActivity(Intent.createChooser(build(), "اختر التطبيق لإرسال الملف المشفّر").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            Toast.makeText(this, "تعذر فتح المشاركة: ${e.message ?: "خطأ"}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun queryName(uri: Uri): String {
