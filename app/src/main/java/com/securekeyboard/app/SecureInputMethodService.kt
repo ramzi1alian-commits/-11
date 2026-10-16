@@ -242,6 +242,10 @@ class SecureInputMethodService : InputMethodService() {
     private var letterMode = LetterMode.ARABIC
     private var showingSymbols = false
     private var showingEmoji = false
+    // V63: permanent clipboard history page (opt-in, see ClipboardHistory.kt).
+    private var showingClipboard = false
+    private var clipboardFilter = ""
+    private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
     private var showingCrypto = false
     private var showingSecureCompose = false
     // True from the moment the user enters secure-compose mode until
@@ -500,6 +504,12 @@ class SecureInputMethodService : InputMethodService() {
 
     override fun onCreateInputView(): View {
         SessionKeyStore.initialize(this)
+        ClipboardHistory.preload(this)
+        if (clipListener == null) {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+            val l = ClipboardManager.OnPrimaryClipChangedListener { captureClipboard() }
+            try { cm?.addPrimaryClipChangedListener(l); clipListener = l } catch (_: Exception) {}
+        }
         if (!attachmentReceiverRegistered) {
             val filter = IntentFilter(AttachmentPickerActivity.ACTION_ATTACHMENT_SELECTED)
             if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -587,6 +597,7 @@ class SecureInputMethodService : InputMethodService() {
         // own bottom action row, since the keys that belong there differ
         // per page (e.g. the emoji page has no need for a "123" key).
         when {
+            showingClipboard -> buildClipboardPage(root, heightDp)
             showingEmoji -> buildEmojiPage(root, heightDp)
             showingSymbols -> buildSymbolsPage(root, heightDp)
             showingSecureCompose -> buildSecureComposePage(root, heightDp)
@@ -771,9 +782,135 @@ class SecureInputMethodService : InputMethodService() {
             showingSymbols = false
             rebuildKeyboardView()
         })
-        bottomRow.addView(spaceKey(heightDp, weight = 4f))
+        bottomRow.addView(makeKey("📋", weight = 1.2f, heightDp = heightDp, a11yLabel = "سجل الحافظة") {
+            clipboardFilter = ""
+            showingClipboard = true
+            rebuildKeyboardView()
+        })
+        bottomRow.addView(spaceKey(heightDp, weight = 3f))
         bottomRow.addView(deleteKey(heightDp))
         bottomRow.addView(enterKey(heightDp))
+        root.addView(bottomRow)
+    }
+
+    /** V63: copies made while the keyboard runs go to the permanent history (normal keyboard only, opt-in). */
+    private fun captureClipboard() {
+        if (!Prefs.clipboardHistoryEnabled(this)) return
+        if (showingSecureCompose || showingCrypto || secureComposeSticky || cryptoDecryptedText != null) return
+        val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val clip = try { cm.primaryClip } catch (_: Exception) { null } ?: return
+        if (clip.itemCount == 0) return
+        val desc = clip.description
+        if (!desc.hasMimeType(android.content.ClipDescription.MIMETYPE_TEXT_PLAIN) &&
+            !desc.hasMimeType(android.content.ClipDescription.MIMETYPE_TEXT_HTML)) return
+        try {
+            if (desc.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true) return
+        } catch (_: Exception) {}
+        val text = try { clip.getItemAt(0).coerceToText(this)?.toString() } catch (_: Exception) { null } ?: return
+        ClipboardHistory.add(this, text)
+    }
+
+    /** V63: the clipboard history page - tap a row to insert it, 📌 pins, 🗑 deletes. */
+    private fun buildClipboardPage(root: LinearLayout, heightDp: Int) {
+        val palette = Prefs.palette(this)
+        val accent = ThemeUtil.accentColor(this)
+        val enabled = Prefs.clipboardHistoryEnabled(this)
+        val title = TextView(this).apply {
+            textSize = 13f
+            setTextColor(accent)
+            gravity = Gravity.CENTER
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            textDirection = View.TEXT_DIRECTION_RTL
+            setPadding(dpToPx(8f), dpToPx(6f), dpToPx(8f), dpToPx(6f))
+        }
+        root.addView(title)
+
+        val data = ArrayList<ClipboardHistory.Clip>()
+        var refreshFn: () -> Unit = {}
+        val adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = data.size
+            override fun getItem(position: Int) = data[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup?): View {
+                val clip = data[position]
+                val ctx = this@SecureInputMethodService
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutDirection = View.LAYOUT_DIRECTION_RTL
+                }
+                val label = TextView(ctx).apply {
+                    text = (if (clip.pinned) "📌 " else "") + clip.text.replace('\n', ' ')
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    textSize = 14f
+                    setTextColor(palette.text)
+                    textDirection = View.TEXT_DIRECTION_FIRST_STRONG
+                    setPadding(dpToPx(10f), dpToPx(8f), dpToPx(10f), dpToPx(8f))
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    setOnClickListener {
+                        currentInputConnection?.commitText(clip.text, 1)
+                        currentWord.clear()
+                        lastFinishedWord = null
+                        scheduleSuggestionsUpdate()
+                    }
+                }
+                val pin = TextView(ctx).apply {
+                    text = "📌"
+                    textSize = 16f
+                    alpha = if (clip.pinned) 1f else 0.35f
+                    setPadding(dpToPx(10f), dpToPx(8f), dpToPx(10f), dpToPx(8f))
+                    setOnClickListener { ClipboardHistory.togglePin(ctx, clip); refreshFn() }
+                }
+                val del = TextView(ctx).apply {
+                    text = "🗑"
+                    textSize = 16f
+                    setPadding(dpToPx(10f), dpToPx(8f), dpToPx(10f), dpToPx(8f))
+                    setOnClickListener { ClipboardHistory.remove(ctx, clip); refreshFn() }
+                }
+                row.addView(label); row.addView(pin); row.addView(del)
+                return row
+            }
+        }
+        val listView = android.widget.ListView(this).apply {
+            divider = android.graphics.drawable.ColorDrawable(palette.border)
+            dividerHeight = 1
+            this.adapter = adapter
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(heightDp * 3.2f)
+            )
+        }
+        refreshFn = {
+            data.clear()
+            if (enabled) data.addAll(ClipboardHistory.snapshot(clipboardFilter))
+            adapter.notifyDataSetChanged()
+            title.text = when {
+                !enabled -> "سجل الحافظة متوقف — فعّله من الإعدادات (يُحفظ مشفّرًا على جهازك فقط)"
+                data.isEmpty() && clipboardFilter.isNotEmpty() -> "لا نتائج لـ «$clipboardFilter»"
+                data.isEmpty() -> "السجل فارغ — انسخ نصًا وسيظهر هنا"
+                clipboardFilter.isNotEmpty() -> "📋 ${data.size} نتيجة لـ «$clipboardFilter» من ${ClipboardHistory.count()}"
+                else -> "📋 السجل: ${data.size} عنصر"
+            }
+        }
+        refreshFn()
+        root.addView(listView)
+
+        val bottomRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        bottomRow.addView(makeKey("رجوع", weight = 1.5f, heightDp = heightDp) {
+            showingClipboard = false
+            rebuildKeyboardView()
+        })
+        // Filters by the last words typed in the field (the keyboard has no text box of its own).
+        bottomRow.addView(makeKey("🔎", weight = 1.2f, heightDp = heightDp, a11yLabel = "تصفية بما كتبته") {
+            val before = currentInputConnection?.getTextBeforeCursor(60, 0)?.toString()?.trim().orEmpty()
+            clipboardFilter = before.split(Regex("\\s+")).takeLast(2).joinToString(" ")
+            refreshFn()
+        })
+        bottomRow.addView(makeKey("الكل", weight = 1.5f, heightDp = heightDp) {
+            clipboardFilter = ""
+            refreshFn()
+        })
+        bottomRow.addView(deleteKey(heightDp, weight = 1.5f))
         root.addView(bottomRow)
     }
 
@@ -2442,6 +2579,7 @@ class SecureInputMethodService : InputMethodService() {
         val cameFromOverlay = showingSymbols || showingEmoji || showingCrypto || showingSecureCompose || restoreCrypto || restoreSecureCompose || gotAttachment
         showingSymbols = false
         showingEmoji = false
+        showingClipboard = false
         // Sensitive plaintext from a previous decrypt never survives a
         // refocus, sticky or not - only the compose screen itself does.
         cryptoDecryptedText = null
@@ -2561,6 +2699,10 @@ class SecureInputMethodService : InputMethodService() {
             attachmentReceiverRegistered = false
         }
         contactPopup?.dismiss()
+        clipListener?.let {
+            try { (getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager)?.removePrimaryClipChangedListener(it) } catch (_: Exception) {}
+            clipListener = null
+        }
         mainHandler.removeCallbacks(suggestionUpdateRunnable)
         super.onDestroy()
         cryptoExecutor.shutdownNow()
@@ -2598,7 +2740,7 @@ class SecureInputMethodService : InputMethodService() {
                 ?.substringAfterLast('\n')
                 ?.trim()
                 ?: ""
-            val phraseSuggestions = if (context.isNotEmpty()) {
+            val phraseSuggestions = if (context.isNotEmpty() && Prefs.phraseLearningEnabled(this)) {
                 PhraseDictionary.suggestionsForContext(context, max = 2)
                     .map { Suggestion(it, isPhrase = true) }
             } else {
@@ -2704,8 +2846,10 @@ class SecureInputMethodService : InputMethodService() {
      */
     private fun mergedSuggestions(prefix: String): List<Suggestion> {
         val out = LinkedHashSet<Suggestion>()
-        for (phrase in PhraseDictionary.suggestionsFor(prefix, max = 2)) {
-            out.add(Suggestion(phrase, isPhrase = true))
+        if (Prefs.phraseLearningEnabled(this)) {
+            for (phrase in PhraseDictionary.suggestionsFor(prefix, max = 2)) {
+                out.add(Suggestion(phrase, isPhrase = true))
+            }
         }
         for (word in LearnedDictionary.suggestionsFor(prefix, 5)) {
             if (out.size >= 5) break

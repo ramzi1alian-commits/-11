@@ -515,6 +515,7 @@ class EncryptActivity : SkActivity() {
             extras.putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
             clip.description.extras = extras
         }
+        ClipboardHistory.ignoreNext() // V63: this app's own result is never saved to the clipboard history
         cm.setPrimaryClip(clip)
         lastCopiedValue = value
         Toast.makeText(this, getString(R.string.clipboard_autoclear_notice), Toast.LENGTH_SHORT).show()

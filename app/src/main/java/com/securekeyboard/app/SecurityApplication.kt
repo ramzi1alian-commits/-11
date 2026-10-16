@@ -21,6 +21,9 @@ class SecurityApplication : Application() {
         // Do not emit the posture to logcat: a hardened build should minimize
         // useful security telemetry available to local attackers.
         SecurityRuntime.assess(this)
+        // V61: restore the persisted session key in EVERY process start. Until now only the keyboard / some
+        // screens did it, so a file opened straight from WhatsApp in a fresh process saw "no active session key".
+        try { SessionKeyStore.initialize(this) } catch (_: Throwable) {}
         // Start every screen in the day/night configuration of the saved palette.
         ThemeUtil.syncNightMode(this)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {

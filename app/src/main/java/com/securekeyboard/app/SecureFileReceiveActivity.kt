@@ -60,6 +60,7 @@ class SecureFileReceiveActivity : Activity() {
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_secure_file_receive)
         purgeOldOpenFiles()
+        try { SessionKeyStore.initialize(this) } catch (_: Throwable) {}
 
         contactSpinner = findViewById(R.id.receive_contact_spinner)
         statusText = findViewById(R.id.receive_status)
@@ -135,6 +136,7 @@ class SecureFileReceiveActivity : Activity() {
         Thread {
             var opened: File? = null
             var displayName = "decrypted_file"
+            var needsSessionKey = false
             try {
                 for (name in candidates) {
                     try {
@@ -146,8 +148,9 @@ class SecureFileReceiveActivity : Activity() {
                         displayName = sanitizeFilename(result.second)
                         opened = moveToOpenDir(result.first, displayName)
                         break
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
                         // Wrong contact, wrong passphrase or damaged file: try the next candidate.
+                        if (e is SecureFileCrypto.PassphraseRequiredException) needsSessionKey = true
                     }
                 }
             } finally {
@@ -157,7 +160,11 @@ class SecureFileReceiveActivity : Activity() {
             if (decrypted == null) {
                 runOnUiThread {
                     decrypting = false
-                    statusText.text = "فشل فك التشفير — لم يُشفَّر لمفتاحك العام، أو مفتاح الجلسة (للتشفير العام) غير نشط/غير مطابق، أو الملف تالف."
+                    statusText.text = if (needsSessionKey && pass == null) {
+                        "هذا الملف مشفّر بمفتاح الجلسة ولا يوجد مفتاح جلسة نشط الآن. فعّل نفس مفتاح الجلسة من لوحة التشفير ثم اضغط «فك التشفير» هنا."
+                    } else {
+                        "فشل فك التشفير — لم يُشفَّر لمفتاحك العام، أو مفتاح الجلسة الحالي يختلف عن الذي شُفّر به، أو الملف تالف."
+                    }
                     Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
                     decryptBtn.isEnabled = true
                 }

@@ -82,6 +82,12 @@
 
     <string name="learned_phrases_title">الجمل المحفوظة</string>
     <string name="learned_phrases_desc">في أي حقل غير حساس، لما تخلّص سطر كامل وتضغط \"إدخال\"، الكيبورد بيحفظ الجملة دي على جهازك فقط (بدون إنترنت) عشان يقترحها عليك كاملة تاني في المرة الجاية. الجملة لازم تكون كلمتين على الأقل، والجمل الطويلة جدا متتحفظش. ده تخزين حقيقي لأجزاء مما تكتبه فعليا - أكتر من مجرد كلمات مفردة - وتقدر تمسحه في أي وقت منفصل عن الكلمات المتعلَّمة.</string>
+    <string name="phrase_learning_switch_desc">تشغيل: يحفظ الجمل ويقترحها. إيقاف: لا يحفظ جملًا جديدة ولا يقترح المحفوظة (ولا يمسحها).</string>
+    <string name="clipboard_history_title">سجل الحافظة الدائم</string>
+    <string name="clipboard_history_desc">يحفظ النصوص التي تنسخها (حتى 5000 عنصر) ليبقى بعد إغلاق الكيبورد، وتجده من مفتاح 📋 في صفحة الأرقام والرموز. مشفّر على جهازك فقط. لا يحفظ ما يُنسخ من شاشات التشفير ولا من تطبيقات تعلّمه بأنه حساس (مثل مدير كلمات المرور)، ولا ما يشبه الرموز الطويلة أو أرقام البطاقات. مطفأ افتراضيا.</string>
+    <string name="clipboard_history_clear_btn">مسح سجل الحافظة</string>
+    <string name="clipboard_history_clear_confirm">اضغط مرة أخرى لتأكيد المسح</string>
+    <string name="clipboard_history_cleared_toast">تم مسح سجل الحافظة</string>
     <string name="clear_phrases_btn">مسح الجمل المحفوظة</string>
     <string name="phrases_cleared_toast">تم مسح كل الجمل المحفوظة</string>
 

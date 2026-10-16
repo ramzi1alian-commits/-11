@@ -127,6 +127,36 @@ class SettingsActivity : SkActivity() {
             Prefs.setAutocorrectEnabled(this, checked)
         }
 
+        val clipSwitch = findViewById<SwitchMaterial>(R.id.switchClipboardHistory)
+        clipSwitch.isChecked = Prefs.clipboardHistoryEnabled(this)
+        clipSwitch.setOnCheckedChangeListener { _, checked ->
+            Prefs.setClipboardHistoryEnabled(this, checked)
+        }
+        val clipClearBtn = findViewById<android.widget.Button>(R.id.btnClearClipboardHistory)
+        var clipClearArmed = false
+        clipClearBtn.setOnClickListener {
+            if (!clipClearArmed) {
+                // Two taps: this wipes everything the history ever saved (pinned items too).
+                clipClearArmed = true
+                clipClearBtn.setText(R.string.clipboard_history_clear_confirm)
+                clipClearBtn.postDelayed({
+                    clipClearArmed = false
+                    clipClearBtn.setText(R.string.clipboard_history_clear_btn)
+                }, 4000L)
+            } else {
+                clipClearArmed = false
+                ClipboardHistory.clearAll(this)
+                clipClearBtn.setText(R.string.clipboard_history_clear_btn)
+                Toast.makeText(this, R.string.clipboard_history_cleared_toast, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val phraseSwitch = findViewById<SwitchMaterial>(R.id.switchPhraseLearning)
+        phraseSwitch.isChecked = Prefs.phraseLearningEnabled(this)
+        phraseSwitch.setOnCheckedChangeListener { _, checked ->
+            Prefs.setPhraseLearningEnabled(this, checked)
+        }
+
         findViewById<android.view.View>(R.id.btnExportLearned).setOnClickListener {
             exportLauncher.launch("learned_words_backup.tsv")
         }
@@ -176,6 +206,7 @@ class SettingsActivity : SkActivity() {
             findViewById(R.id.btnAutoDecrypt),
             findViewById(R.id.btnClearLearned),
             findViewById(R.id.btnClearPhrases),
+            findViewById(R.id.btnClearClipboardHistory),
             findViewById(R.id.btnExportLearned),
             findViewById(R.id.btnImportLearned),
             findViewById(R.id.btnAbout)

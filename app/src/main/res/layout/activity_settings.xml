@@ -180,13 +180,34 @@
             android:orientation="vertical"
             android:layout_marginTop="12dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/learned_phrases_title"
-                android:textColor="?attr/skText"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/learned_phrases_title"
+                    android:textColor="?attr/skText"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchPhraseLearning"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/phrase_learning_switch_desc"
+                android:textColor="?attr/skTextSecondary"
+                android:textSize="12sp" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -204,6 +225,52 @@
                 android:layout_width="match_parent"
                 android:layout_height="52dp"
                 android:text="@string/clear_phrases_btn" />
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/CardStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/clipboard_history_title"
+                    android:textColor="?attr/skText"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchClipboardHistory"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="16dp"
+                android:text="@string/clipboard_history_desc"
+                android:textColor="?attr/skTextSecondary"
+                android:textSize="13sp"
+                android:lineSpacingExtra="4dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnClearClipboardHistory"
+                style="@style/SecondaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="@string/clipboard_history_clear_btn" />
         </LinearLayout>
 
         <LinearLayout
