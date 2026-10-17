@@ -13,7 +13,7 @@ import javax.crypto.spec.SecretKeySpec
  *
  * Every contact-bound operation starts from the same device identity and the
  * selected contact public key through ECDH. The resulting secret is then
- * domain-separated with HKDF/HMAC-SHA256 so messages and files never reuse
+ * domain-separated with HKDF/HMAC-SHA384 (Suite 2) so messages and files never reuse
  * the same AES key, while still belonging to the exact same contact identity.
  *
  * Two derivation families live here:
@@ -38,8 +38,8 @@ object ContactCrypto {
     private const val FILE_SALT = "SecureKeyboard-file-salt-v1"
     private const val FILE_INFO = "SecureKeyboard-file-key-v1"
 
-    private const val MESSAGE_V4_SALT = "SecureKeyboard-v4-msg-salt"
-    private const val MESSAGE_V4_INFO = "SecureKeyboard-message-key-v4"
+    private const val MESSAGE_V4_SALT = "SecureKeyboard-S2-msg-salt"
+    private const val MESSAGE_V4_INFO = "SecureKeyboard-S2-message-key"
 
     init {
         // See CryptoProvider's doc comment / DeviceIdentity's init block.
@@ -78,12 +78,12 @@ object ContactCrypto {
      * bound to both public points. Wipes [sharedSecret]; the caller owns the points.
      */
     fun deriveFileKeyV3(sharedSecret: ByteArray, ephemeralPoint: ByteArray, recipientPoint: ByteArray): ByteArray {
-        require(ephemeralPoint.size == 65 && recipientPoint.size == 65) { "invalid identity point" }
-        val salt = "SecureKeyboard-file-salt-v3".toByteArray(Charsets.UTF_8)
-        val label = "SecureKeyboard-file-key-v3".toByteArray(Charsets.UTF_8)
+        require(ephemeralPoint.size == Suite.POINT_LENGTH && recipientPoint.size == Suite.POINT_LENGTH) { "invalid identity point" }
+        val salt = "SecureKeyboard-S2-file-salt".toByteArray(Charsets.UTF_8)
+        val label = "SecureKeyboard-S2-file-key".toByteArray(Charsets.UTF_8)
         val info = label + byteArrayOf(0) + ephemeralPoint + recipientPoint
         return try {
-            hkdfSha256(salt, sharedSecret, info)
+            hkdf(salt, sharedSecret, info)
         } finally {
             Arrays.fill(sharedSecret, 0); Arrays.fill(salt, 0); Arrays.fill(label, 0); Arrays.fill(info, 0)
         }
@@ -101,7 +101,7 @@ object ContactCrypto {
         val salt = purpose.salt.toByteArray(Charsets.UTF_8)
         val info = purpose.info.toByteArray(Charsets.UTF_8)
         return try {
-            hkdfSha256(salt, ikm, info)
+            hkdf(salt, ikm, info)
         } finally {
             Arrays.fill(sharedSecret, 0)
             Arrays.fill(passBytes, 0)
@@ -129,8 +129,8 @@ object ContactCrypto {
      * @param dhEphemeralStatic ECDH(ephemeral, recipient static)
      * @param dhStaticStatic    ECDH(sender static, recipient static) - proves sender identity
      * @param passphraseKey     Argon2id output of the passphrase (already stretched)
-     * @param senderPoint       canonical 65-byte uncompressed sender identity point
-     * @param recipientPoint    canonical 65-byte uncompressed recipient identity point
+     * @param senderPoint       canonical 97-byte uncompressed sender identity point
+     * @param recipientPoint    canonical 97-byte uncompressed recipient identity point
      * @param header            the complete authenticated message header
      *
      * Caller owns (and must wipe) every input array; this function wipes only its own temporaries.
@@ -143,14 +143,14 @@ object ContactCrypto {
         recipientPoint: ByteArray,
         header: ByteArray
     ): ByteArray {
-        require(senderPoint.size == 65 && recipientPoint.size == 65) { "invalid identity point" }
+        require(senderPoint.size == Suite.POINT_LENGTH && recipientPoint.size == Suite.POINT_LENGTH) { "invalid identity point" }
         val ikm = lengthPrefixed(dhEphemeralStatic, dhStaticStatic, passphraseKey)
         val salt = MESSAGE_V4_SALT.toByteArray(Charsets.UTF_8)
-        val headerHash = MessageDigest.getInstance("SHA-256").digest(header)
+        val headerHash = MessageDigest.getInstance(Suite.HASH).digest(header)
         val label = MESSAGE_V4_INFO.toByteArray(Charsets.UTF_8)
         val info = label + byteArrayOf(0) + senderPoint + recipientPoint + headerHash
         return try {
-            hkdfSha256(salt, ikm, info)
+            hkdf(salt, ikm, info)
         } finally {
             Arrays.fill(ikm, 0)
             Arrays.fill(salt, 0)
@@ -169,14 +169,14 @@ object ContactCrypto {
         return buf.array()
     }
 
-    /** HKDF-SHA256 (RFC 5869), single expand block = 32 bytes. Wipes its intermediates. */
-    private fun hkdfSha256(salt: ByteArray, ikm: ByteArray, info: ByteArray): ByteArray {
-        val extract = Mac.getInstance("HmacSHA256")
-        extract.init(SecretKeySpec(salt, "HmacSHA256"))
+    /** HKDF with HMAC-SHA-384 (RFC 5869), single expand block; the first 32 bytes are used as the AES-256 key. */
+    private fun hkdf(salt: ByteArray, ikm: ByteArray, info: ByteArray): ByteArray {
+        val extract = Mac.getInstance(Suite.HMAC)
+        extract.init(SecretKeySpec(salt, Suite.HMAC))
         val prk = extract.doFinal(ikm)
         try {
-            val expand = Mac.getInstance("HmacSHA256")
-            expand.init(SecretKeySpec(prk, "HmacSHA256"))
+            val expand = Mac.getInstance(Suite.HMAC)
+            expand.init(SecretKeySpec(prk, Suite.HMAC))
             val block = expand.doFinal(info + byteArrayOf(1))
             try {
                 return block.copyOf(KEY_LENGTH_BYTES)

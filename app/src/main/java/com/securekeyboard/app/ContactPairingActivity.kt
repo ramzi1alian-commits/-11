@@ -144,7 +144,7 @@ class ContactPairingActivity : SkActivity() {
      */
     private fun computeSafetyNumber(keyA: String, keyB: String): String {
         val sorted = listOf(keyA, keyB).sorted()
-        val digest = MessageDigest.getInstance("SHA-256")
+        val digest = MessageDigest.getInstance(Suite.HASH)
             .digest((sorted[0] + sorted[1]).toByteArray(Charsets.UTF_8))
         // Take the first 6 bytes -> 6 fixed-width hexadecimal groups, easy to compare
         val sb = StringBuilder()

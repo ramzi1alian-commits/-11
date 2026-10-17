@@ -45,6 +45,8 @@ object SecureFileCrypto {
     private const val VERSION_ECDHE: Byte = 2
     private const val VERSION_PUBKEY: Byte = 3
     private const val VERSION_PASSPHRASE: Byte = 4
+    /** Suite 2: SKF2 v1/v2 files (P-256 / unstretched) are no longer accepted. */
+    private const val ALLOW_LEGACY_FILES = false
     private const val SALT_LENGTH = 16
     private val SALT_FILE_PASS = "SecureKeyboard/file/v4/salt".toByteArray(Charsets.UTF_8)
     private val LABEL_FILE_PASS = "SecureKeyboard/file/v4/passphrase".toByteArray(Charsets.UTF_8)
@@ -356,8 +358,8 @@ object SecureFileCrypto {
                         readFully(inputStream, prefix)
                         require(prefix.copyOfRange(0, 4).contentEquals(MAGIC)) { "not a SecureKeyboard file" }
                         when (prefix[4]) {
-                            VERSION_LEGACY -> verifyLegacy(context, inputStream, prefix, needContact(contactPublicKey), needPass(passphrase))
-                            VERSION_ECDHE -> verifyEcdhe(context, inputStream, prefix, KeyMode.PASSPHRASE, needPass(passphrase))
+                            VERSION_LEGACY -> { require(ALLOW_LEGACY_FILES) { "old file format is not supported" }; verifyLegacy(context, inputStream, prefix, needContact(contactPublicKey), needPass(passphrase)) }
+                            VERSION_ECDHE -> { require(ALLOW_LEGACY_FILES) { "old file format is not supported" }; verifyEcdhe(context, inputStream, prefix, KeyMode.PASSPHRASE, needPass(passphrase)) }
                             VERSION_PUBKEY -> verifyEcdhe(context, inputStream, prefix, KeyMode.PUBLIC_KEY, null)
                             VERSION_PASSPHRASE -> verifyPassphrase(inputStream, prefix, needPass(passphrase))
                             else -> throw IllegalArgumentException("unsupported file version")
@@ -375,8 +377,8 @@ object SecureFileCrypto {
                     try {
                         readFully(inputStream, prefix)
                         when (prefix[4]) {
-                            VERSION_LEGACY -> decryptLegacy(context, inputStream, prefix, needContact(contactPublicKey), needPass(passphrase), temp)
-                            VERSION_ECDHE -> decryptEcdhe(context, inputStream, prefix, KeyMode.PASSPHRASE, needPass(passphrase), temp)
+                            VERSION_LEGACY -> { require(ALLOW_LEGACY_FILES) { "old file format is not supported" }; decryptLegacy(context, inputStream, prefix, needContact(contactPublicKey), needPass(passphrase), temp) }
+                            VERSION_ECDHE -> { require(ALLOW_LEGACY_FILES) { "old file format is not supported" }; decryptEcdhe(context, inputStream, prefix, KeyMode.PASSPHRASE, needPass(passphrase), temp) }
                             VERSION_PUBKEY -> decryptEcdhe(context, inputStream, prefix, KeyMode.PUBLIC_KEY, null, temp)
                             VERSION_PASSPHRASE -> decryptPassphrase(inputStream, prefix, needPass(passphrase), temp)
                             else -> throw IllegalArgumentException("unsupported file version")

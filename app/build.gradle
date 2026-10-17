@@ -40,11 +40,11 @@ android {
         // Android treats applicationId as the unique app identity; two
         // different IDs can be installed side by side even though the
         // internal Kotlin package (namespace, above) is unchanged.
-        applicationId "com.securekeyboard.pro"
+        applicationId "com.securekeyboard.pro.s2" // Suite 2: installs NEXT TO the old app (own data, own keys)
         minSdk 24
         targetSdk 34
-        versionCode 51
-        versionName "5.1"
+        versionCode 68
+        versionName "6.8-s2"
     }
 
     signingConfigs {

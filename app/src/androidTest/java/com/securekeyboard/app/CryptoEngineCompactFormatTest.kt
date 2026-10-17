@@ -30,21 +30,22 @@ class CryptoEngineCompactFormatTest {
 
     @Test
     fun invalid_compressed_points_are_rejected() {
-        val bad = ByteArray(33).also { it[0] = 5 }
+        val bad = ByteArray(49).also { it[0] = 5 }
         try { DeviceIdentity.publicKeyFromCompressed(bad); throw AssertionError("bad prefix accepted") } catch (_: IllegalArgumentException) { }
-        val notOnCurve = ByteArray(33).also { it[0] = 2; it[32] = 5 } // x = 5 has no square root on P-256
+        // x = 4: x^3 - 3x + b is a quadratic NON-residue modulo the P-384 prime, so no point has this x.
+        val notOnCurve = ByteArray(49).also { it[0] = 2; it[48] = 4 }
         try {
             DeviceIdentity.publicKeyFromCompressed(notOnCurve)
-            // x=5 may happen to be valid; the point must then still pass validation, which it did.
+            throw AssertionError("a point that is not on the curve was accepted")
         } catch (_: IllegalArgumentException) { }
     }
 
     @Test
-    fun contact_message_overhead_is_67_bytes_and_default_profile_is_argon2() {
+    fun contact_message_overhead_is_83_bytes_and_default_profile_is_argon2() {
         val encoded = CryptoEngineV2.encrypt(context, "x".toCharArray(), pass.copyOf(), ownKey())
         val raw = Base64.decode(encoded, Base64.NO_WRAP)
         assertEquals(6.toByte(), raw[0])
-        assertEquals(2 + 16 + 33 + 16 + 1, raw.size)
+        assertEquals(2 + 16 + 49 + 16 + 1, raw.size)
         assertTrue("default must not be the PBKDF2 profile", ((raw[1].toInt() shr 1) and 7) != 4)
         Arrays.fill(CryptoEngineV2.decrypt(context, encoded, pass.copyOf(), ownKey()), '\u0000')
     }
@@ -66,7 +67,7 @@ class CryptoEngineCompactFormatTest {
     fun every_header_byte_is_authenticated() {
         val encoded = CryptoEngineV2.encrypt(context, "header integrity".toCharArray(), pass.copyOf(), ownKey(), 3600L)
         val raw = Base64.decode(encoded, Base64.NO_WRAP)
-        val headerLen = 2 + 4 + 16 + 33
+        val headerLen = 2 + 4 + 16 + 49
         for (i in 0 until headerLen) {
             val t = raw.copyOf().also { it[i] = (it[i].toInt() xor 0x01).toByte() }
             try {

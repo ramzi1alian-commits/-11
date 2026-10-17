@@ -108,7 +108,7 @@ class CryptoEngineV4Test {
         val spec = ECPublicKeySpec(ECPoint(BigInteger.ONE, BigInteger.ONE), params)
         try {
             val bad = KeyFactory.getInstance("EC").generatePublic(spec)
-            DeviceIdentity.requireValidP256PublicKey(bad)
+            DeviceIdentity.requireValidPublicKey(bad)
             throw AssertionError("off-curve point accepted")
         } catch (e: AssertionError) {
             throw e
@@ -118,10 +118,10 @@ class CryptoEngineV4Test {
     }
 
     @Test
-    fun canonical_point_is_65_bytes_and_stable() {
+    fun canonical_point_is_97_bytes_and_stable() {
         val a = DeviceIdentity.myPublicPoint(context)
         val b = DeviceIdentity.publicPoint(ownKey())
-        assertEquals(65, a.size)
+        assertEquals(97, a.size)
         assertTrue(Arrays.equals(a, b))
         assertEquals(4, a[0].toInt())
     }

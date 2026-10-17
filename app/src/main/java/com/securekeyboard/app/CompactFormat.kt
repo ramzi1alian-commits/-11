@@ -10,14 +10,14 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Shared pieces of the compact message formats.
  *
- *   v6 (contact-bound)   : version | flags | [expiry u32] | salt(16) | ephemeral pub (33, compressed) | AES-GCM ct+tag
+ *   v6 (contact-bound)   : version | flags | [expiry u32] | salt(16) | ephemeral pub (49, compressed P-384) | AES-GCM ct+tag
  *   v7 (passphrase only) : version | flags | [expiry u32] | salt(16) | AES-GCM ct+tag
  *
  * What was removed compared with v3/v4, and why this is safe:
  *  - The 12-byte IV is not sent. The AES key is derived per message from a fresh random salt (and, for
  *    v6, a fresh ephemeral key), so every key is used exactly once; the IV is derived from the same
  *    HKDF output as the key. (A fixed/derived IV is only a problem when a key is reused.)
- *  - The X.509 wrapper around the ephemeral key (91 bytes) is replaced by the 33-byte compressed point.
+ *  - The X.509 wrapper around the ephemeral key (120 bytes) is replaced by the 49-byte compressed point.
  *  - The Argon2 parameters (6 bytes) become a 3-bit profile number in the flags byte. Profiles are a
  *    fixed table, so a crafted message can never request an arbitrary memory/time cost.
  *  - The expiry (8 bytes) is a 4-byte unsigned value and is only present when an expiry is used.
@@ -34,7 +34,7 @@ internal object CompactFormat {
     const val SALT_LENGTH = 16
     const val IV_LENGTH = 12
     const val TAG_BYTES = 16
-    const val COMPRESSED_POINT_LENGTH = 33
+    const val COMPRESSED_POINT_LENGTH = Suite.COMPRESSED_POINT_LENGTH // 49 (P-384)
     const val PROFILE_PBKDF2 = 4
 
     private const val FLAG_EXPIRY = 0x01
@@ -105,9 +105,9 @@ internal object CompactFormat {
         recipientPoint: ByteArray,
         header: ByteArray
     ): Pair<ByteArray, ByteArray> {
-        require(senderPoint.size == 65 && recipientPoint.size == 65) { "invalid identity point" }
+        require(senderPoint.size == Suite.POINT_LENGTH && recipientPoint.size == Suite.POINT_LENGTH) { "invalid identity point" }
         val ikm = lengthPrefixed(dhEphemeralStatic, dhStaticStatic, passphraseKey)
-        val headerHash = MessageDigest.getInstance("SHA-256").digest(header)
+        val headerHash = MessageDigest.getInstance(Suite.HASH).digest(header)
         val info = LABEL_CONTACT + byteArrayOf(0) + senderPoint + recipientPoint + headerHash
         try {
             return split(hkdf(SALT_CONTACT, ikm, info, 32 + IV_LENGTH))
@@ -118,7 +118,7 @@ internal object CompactFormat {
 
     /** v7: key (32) + IV (12) from the passphrase factor and the whole header. */
     fun derivePassphraseKeyAndIv(passphraseKey: ByteArray, header: ByteArray): Pair<ByteArray, ByteArray> {
-        val headerHash = MessageDigest.getInstance("SHA-256").digest(header)
+        val headerHash = MessageDigest.getInstance(Suite.HASH).digest(header)
         val info = LABEL_PASSPHRASE + byteArrayOf(0) + headerHash
         try {
             return split(hkdf(SALT_PASSPHRASE, passphraseKey, info, 32 + IV_LENGTH))
@@ -134,19 +134,19 @@ internal object CompactFormat {
         return Pair(key, iv)
     }
 
-    private val SALT_CONTACT = "SecureKeyboard/message/v6/salt".toByteArray(Charsets.UTF_8)
-    private val LABEL_CONTACT = "SecureKeyboard/message/v6/contact".toByteArray(Charsets.UTF_8)
-    private val SALT_PASSPHRASE = "SecureKeyboard/message/v7/salt".toByteArray(Charsets.UTF_8)
-    private val LABEL_PASSPHRASE = "SecureKeyboard/message/v7/passphrase".toByteArray(Charsets.UTF_8)
+    private val SALT_CONTACT = "SecureKeyboard/S2/message/v6/salt".toByteArray(Charsets.UTF_8)
+    private val LABEL_CONTACT = "SecureKeyboard/S2/message/v6/contact".toByteArray(Charsets.UTF_8)
+    private val SALT_PASSPHRASE = "SecureKeyboard/S2/message/v7/salt".toByteArray(Charsets.UTF_8)
+    private val LABEL_PASSPHRASE = "SecureKeyboard/S2/message/v7/passphrase".toByteArray(Charsets.UTF_8)
 
-    /** RFC 5869 HKDF-SHA256 for outputs up to 255 blocks. */
+    /** RFC 5869 HKDF with HMAC-SHA-384 (Suite 2) for outputs up to 255 blocks. */
     fun hkdf(salt: ByteArray, ikm: ByteArray, info: ByteArray, length: Int): ByteArray {
-        val extract = Mac.getInstance("HmacSHA256")
-        extract.init(SecretKeySpec(salt, "HmacSHA256"))
+        val extract = Mac.getInstance(Suite.HMAC)
+        extract.init(SecretKeySpec(salt, Suite.HMAC))
         val prk = extract.doFinal(ikm)
         try {
-            val expand = Mac.getInstance("HmacSHA256")
-            expand.init(SecretKeySpec(prk, "HmacSHA256"))
+            val expand = Mac.getInstance(Suite.HMAC)
+            expand.init(SecretKeySpec(prk, Suite.HMAC))
             val out = ByteArrayOutputStream()
             var t = ByteArray(0)
             var counter = 1

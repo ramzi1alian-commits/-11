@@ -101,6 +101,8 @@ object CryptoEngine {
     // anything new. Do not "clean these up"; removing them would make
     // every message encrypted before this change permanently undecryptable.
     private const val LEGACY_V2_ARGON_MEMORY_KB = 65536
+    /** Suite 2: pre-compact passphrase messages (v2/v3) are no longer accepted. */
+    private const val ALLOW_LEGACY_PASSPHRASE = false
     private const val LEGACY_V2_ARGON_ITERATIONS = 3
     private const val LEGACY_V2_ARGON_PARALLELISM = 1
 
@@ -310,8 +312,8 @@ object CryptoEngine {
         }
 
         val headerLength = when (combined[0]) {
-            VERSION_V2 -> HEADER_LENGTH_V2
-            VERSION_V3 -> HEADER_LENGTH_V3
+            VERSION_V2 -> { require(ALLOW_LEGACY_PASSPHRASE) { "legacy messages are disabled" }; HEADER_LENGTH_V2 }
+            VERSION_V3 -> { require(ALLOW_LEGACY_PASSPHRASE) { "legacy messages are disabled" }; HEADER_LENGTH_V3 }
             else -> throw IllegalArgumentException("unsupported ciphertext format version")
         }
         require(combined.size > headerLength + SALT_LENGTH + IV_LENGTH) { "ciphertext too short" }

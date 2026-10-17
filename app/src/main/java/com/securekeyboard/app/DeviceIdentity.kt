@@ -49,13 +49,13 @@ import javax.crypto.KeyAgreement
  *  - Canonical 65-byte point encoding for transcript binding.
  */
 object DeviceIdentity {
-    private const val CURVE = "secp256r1"
-    private const val IDENTITY_FILE = "device_identity_v14.enc"
+    private const val CURVE = Suite.CURVE
+    private const val IDENTITY_FILE = "device_identity_s2.enc" // Suite 2: P-384 identity, new file
     private const val REGENERATED_FLAG_FILE = "identity_regenerated.flag"
     private const val MAX_KEY_BYTES = 4096
     private const val FORMAT_VERSION = 1
 
-    private val p256Params: ECParameterSpec by lazy {
+    private val curveParams: ECParameterSpec by lazy {
         val ap = AlgorithmParameters.getInstance("EC")
         ap.init(ECGenParameterSpec(CURVE))
         ap.getParameterSpec(ECParameterSpec::class.java)
@@ -87,7 +87,7 @@ object DeviceIdentity {
                 try {
                     val pub = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(publicBytes))
                     val priv = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(privateBytes))
-                    requireValidP256PublicKey(pub)
+                    requireValidPublicKey(pub)
                     KeyPair(pub, priv)
                 } finally {
                     Arrays.fill(publicBytes, 0)
@@ -164,7 +164,7 @@ object DeviceIdentity {
     fun myPublicKeyBase64(context: Context): String =
         Base64.encodeToString(getOrCreateKeyPair(context).public.encoded, Base64.NO_WRAP)
 
-    /** Canonical 65-byte uncompressed encoding (0x04 || X || Y) of this device's identity key. */
+    /** Canonical 97-byte (Suite 2, P-384) uncompressed encoding (0x04 || X || Y) of this device's identity key. */
     fun myPublicPoint(context: Context): ByteArray = publicPoint(getOrCreateKeyPair(context).public)
 
     fun parseContactPublicKey(base64: String): PublicKey {
@@ -172,7 +172,7 @@ object DeviceIdentity {
         require(bytes.size in 50..MAX_KEY_BYTES) { "invalid public key size" }
         return try {
             val key = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(bytes))
-            requireValidP256PublicKey(key)
+            requireValidPublicKey(key)
             key
         } finally {
             Arrays.fill(bytes, 0)
@@ -184,10 +184,10 @@ object DeviceIdentity {
      * equation. (Cofactor is 1, so on-curve is sufficient to rule out small-subgroup
      * and invalid-curve inputs.)
      */
-    fun requireValidP256PublicKey(key: PublicKey): ECPublicKey {
+    fun requireValidPublicKey(key: PublicKey): ECPublicKey {
         require(key is ECPublicKey) { "not an EC public key" }
         val params = key.params
-        val ref = p256Params
+        val ref = curveParams
         require(
             params.curve == ref.curve && params.generator == ref.generator &&
                 params.order == ref.order && params.cofactor == ref.cofactor
@@ -207,72 +207,72 @@ object DeviceIdentity {
         return key
     }
 
-    /** Canonical 65-byte uncompressed point (0x04 || X || Y) for transcript binding. */
+    /** Canonical 97-byte uncompressed point (0x04 || X || Y) for transcript binding. */
     fun publicPoint(key: PublicKey): ByteArray {
-        val ec = requireValidP256PublicKey(key)
-        val out = ByteArray(65)
+        val ec = requireValidPublicKey(key)
+        val out = ByteArray(Suite.POINT_LENGTH)
         out[0] = 4
-        System.arraycopy(fixed32(ec.w.affineX), 0, out, 1, 32)
-        System.arraycopy(fixed32(ec.w.affineY), 0, out, 33, 32)
+        System.arraycopy(fixedCoord(ec.w.affineX), 0, out, 1, Suite.COORD_LENGTH)
+        System.arraycopy(fixedCoord(ec.w.affineY), 0, out, 1 + Suite.COORD_LENGTH, Suite.COORD_LENGTH)
         return out
     }
 
-    /** 33-byte SEC1 compressed form (02/03 || X) of a canonical 65-byte point. */
+    /** 49-byte SEC1 compressed form (02/03 || X) of a canonical 97-byte point. */
     fun compressPoint(uncompressed: ByteArray): ByteArray {
-        require(uncompressed.size == 65 && uncompressed[0].toInt() == 4) { "invalid point" }
-        val out = ByteArray(33)
-        out[0] = if ((uncompressed[64].toInt() and 1) == 0) 2 else 3
-        System.arraycopy(uncompressed, 1, out, 1, 32)
+        require(uncompressed.size == Suite.POINT_LENGTH && uncompressed[0].toInt() == 4) { "invalid point" }
+        val out = ByteArray(Suite.COMPRESSED_POINT_LENGTH)
+        out[0] = if ((uncompressed[Suite.POINT_LENGTH - 1].toInt() and 1) == 0) 2 else 3
+        System.arraycopy(uncompressed, 1, out, 1, Suite.COORD_LENGTH)
         return out
     }
 
     /**
      * Rebuilds a P-256 public key from its 33-byte compressed form and validates it
-     * (y^2 must equal x^3 + ax + b; the result also passes [requireValidP256PublicKey]).
+     * (y^2 must equal x^3 + ax + b; the result also passes [requireValidPublicKey]).
      */
     fun publicKeyFromCompressed(compressed: ByteArray): PublicKey {
-        require(compressed.size == 33 && (compressed[0].toInt() == 2 || compressed[0].toInt() == 3)) {
+        require(compressed.size == Suite.COMPRESSED_POINT_LENGTH && (compressed[0].toInt() == 2 || compressed[0].toInt() == 3)) {
             "invalid compressed point"
         }
-        val params = p256Params
+        val params = curveParams
         val p = (params.curve.field as ECFieldFp).p
-        val x = BigInteger(1, compressed.copyOfRange(1, 33))
+        val x = BigInteger(1, compressed.copyOfRange(1, 1 + Suite.COORD_LENGTH))
         require(x < p) { "invalid public point" }
         val rhs = x.multiply(x).multiply(x)
             .add(params.curve.a.multiply(x))
             .add(params.curve.b)
             .mod(p)
-        // p = 3 (mod 4) for P-256, so a square root is rhs^((p+1)/4).
+        // p = 3 (mod 4) for P-384 as well (p ends in ...ffffffff), so a square root is rhs^((p+1)/4).
         var y = rhs.modPow(p.add(BigInteger.ONE).shiftRight(2), p)
         require(y.multiply(y).mod(p) == rhs) { "point is not on the curve" }
         if (y.testBit(0) != (compressed[0].toInt() == 3)) y = p.subtract(y)
         val key = KeyFactory.getInstance("EC").generatePublic(
             java.security.spec.ECPublicKeySpec(ECPoint(x, y), params)
         )
-        requireValidP256PublicKey(key)
+        requireValidPublicKey(key)
         return key
     }
 
-    private fun fixed32(v: BigInteger): ByteArray {
+    private fun fixedCoord(v: BigInteger): ByteArray {
         val raw = v.toByteArray()
         var start = 0
         while (start < raw.size - 1 && raw[start].toInt() == 0) start++
         val len = raw.size - start
-        require(len <= 32) { "coordinate too large" }
-        val out = ByteArray(32)
-        System.arraycopy(raw, start, out, 32 - len, len)
+        require(len <= Suite.COORD_LENGTH) { "coordinate too large" }
+        val out = ByteArray(Suite.COORD_LENGTH)
+        System.arraycopy(raw, start, out, Suite.COORD_LENGTH - len, len)
         Arrays.fill(raw, 0)
         return out
     }
 
     fun generateEphemeralKeyPair(): java.security.KeyPair {
         val generator = java.security.KeyPairGenerator.getInstance("EC")
-        generator.initialize(java.security.spec.ECGenParameterSpec("secp256r1"))
+        generator.initialize(java.security.spec.ECGenParameterSpec(CURVE))
         return generator.generateKeyPair()
     }
 
     fun computeSharedSecretWithPrivateKey(privateKey: java.security.PrivateKey, peerPublicKey: PublicKey): ByteArray {
-        requireValidP256PublicKey(peerPublicKey)
+        requireValidPublicKey(peerPublicKey)
         val agreement = try {
             KeyAgreement.getInstance("ECDH")
         } catch (e: Exception) {
@@ -288,7 +288,7 @@ object DeviceIdentity {
     }
 
     fun computeSharedSecret(context: Context, contactPublicKey: PublicKey): ByteArray {
-        requireValidP256PublicKey(contactPublicKey)
+        requireValidPublicKey(contactPublicKey)
         val pair = getOrCreateKeyPair(context)
         val agreement = try {
             KeyAgreement.getInstance("ECDH")

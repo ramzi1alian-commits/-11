@@ -68,10 +68,11 @@ object CryptoEngineV2 {
     private const val LEGACY_FORMAT_VERSION: Byte = 2
 
     /** v3 messages (no sender authentication) remain readable so old conversations still open. */
-    const val ALLOW_LEGACY_V3_DECRYPT = true
+    const val ALLOW_LEGACY_V3_DECRYPT = false // Suite 2: old (P-256) formats are not readable
 
     /** v2 used one static-static key per contact pair forever. Off by default. */
     const val ALLOW_LEGACY_V2_DECRYPT = false
+    const val ALLOW_LEGACY_V4_DECRYPT = false
 
     /** Reject a v4 ciphertext that was already decrypted once on this device. */
     const val ENFORCE_REPLAY_PROTECTION = true
@@ -86,7 +87,7 @@ object CryptoEngineV2 {
     ): String {
         require(passphraseChars.isNotEmpty()) { "passphrase is empty" }
         if (expirySeconds != null) require(expirySeconds > 0) { "invalid expiry" }
-        DeviceIdentity.requireValidP256PublicKey(recipientPublicKey)
+        DeviceIdentity.requireValidPublicKey(recipientPublicKey)
 
         val random = SecureRandom()
         val ephemeral = DeviceIdentity.generateEphemeralKeyPair()
@@ -150,13 +151,16 @@ object CryptoEngineV2 {
         require(encoded.isNotEmpty() && encoded.length <= MAX_CIPHERTEXT_BASE64_CHARS) {
             "ciphertext too large or empty"
         }
-        DeviceIdentity.requireValidP256PublicKey(senderPublicKey)
+        DeviceIdentity.requireValidPublicKey(senderPublicKey)
         val combined = Base64.decode(encoded, Base64.NO_WRAP)
         try {
             require(combined.size > LEGACY_HEADER_LENGTH + IV_LENGTH) { "ciphertext too short" }
             val plain = when (combined[0]) {
                 CompactFormat.VERSION_CONTACT -> decryptV6(context, combined, passphraseChars, senderPublicKey)
-                V4_FORMAT_VERSION -> decryptV4(context, combined, passphraseChars, senderPublicKey)
+                V4_FORMAT_VERSION -> {
+                    require(ALLOW_LEGACY_V4_DECRYPT) { "legacy v4 messages are disabled" }
+                    decryptV4(context, combined, passphraseChars, senderPublicKey)
+                }
                 V3_FORMAT_VERSION -> {
                     require(ALLOW_LEGACY_V3_DECRYPT) { "legacy v3 messages are disabled" }
                     decryptV3(context, combined, passphraseChars)
@@ -290,7 +294,7 @@ object CryptoEngineV2 {
         var key = ByteArray(0)
         try {
             val ephemeralPublic = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(ephemeralBytes))
-            DeviceIdentity.requireValidP256PublicKey(ephemeralPublic)
+            DeviceIdentity.requireValidPublicKey(ephemeralPublic)
             passphraseKey = CryptoEngine.deriveKey(passphraseChars, salt, memoryKb, iterations, parallelism)
             dhEphemeral = DeviceIdentity.computeSharedSecret(context, ephemeralPublic)
             dhStatic = DeviceIdentity.computeSharedSecret(context, senderPublicKey)

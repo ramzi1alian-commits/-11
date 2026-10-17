@@ -1,7 +1,7 @@
 <resources>
     <!-- الاسم اتغيّر (وكمان الـ applicationId في build.gradle) عشان
          النسخة دي تتثبت بجانب أي نسخة قديمة من التطبيق، مش تستبدلها. -->
-    <string name="app_name">كيبورد آمن برو</string>
+    <string name="app_name">كيبورد آمن برو S2</string>
     <string name="keyboard_name">كيبورد آمن برو</string>
     <string name="app_tagline">كيبورد وتشفير محلي، بدون إنترنت نهائيا</string>
 
