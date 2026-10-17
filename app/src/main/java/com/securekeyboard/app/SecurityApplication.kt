@@ -24,6 +24,16 @@ class SecurityApplication : Application() {
         // V61: restore the persisted session key in EVERY process start. Until now only the keyboard / some
         // screens did it, so a file opened straight from WhatsApp in a fresh process saw "no active session key".
         try { SessionKeyStore.initialize(this) } catch (_: Throwable) {}
+        // V65: housekeeping off the main thread - encrypted files already handed to a chat app are deleted after
+        // 24 h, plaintext working copies / inbox files after 1 h.
+        Thread {
+            try {
+                val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+                java.io.File(filesDir, "secure_outbox").listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+                AttachmentStore.purgeOld(this)
+                FileTextTransport.purgeOld(this)
+            } catch (_: Throwable) {}
+        }.apply { isDaemon = true }.start()
         // Start every screen in the day/night configuration of the saved palette.
         ThemeUtil.syncNightMode(this)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {

@@ -158,6 +158,12 @@ object CryptoEngine {
         iterations: Int = ARGON_ITERATIONS,
         parallelism: Int = ARGON_PARALLELISM
     ): ByteArray {
+        // V65: a (crafted or very old) message may ask for far more memory than this phone has. Refuse cleanly
+        // instead of running into an OutOfMemoryError that takes the whole app down.
+        val needBytes = memoryKb.toLong() * 1024L
+        if (needBytes > (Runtime.getRuntime().maxMemory() * 9L) / 10L) {
+            throw IllegalStateException("this message needs more memory than the device can give")
+        }
         val passBytes = charsToUtf8Bytes(passChars)
         try {
             val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
@@ -170,7 +176,11 @@ object CryptoEngine {
             val generator = Argon2BytesGenerator()
             generator.init(params)
             val keyBytes = ByteArray(KEY_LENGTH_BYTES)
-            generator.generateBytes(passBytes, keyBytes)
+            try {
+                generator.generateBytes(passBytes, keyBytes)
+            } catch (e: OutOfMemoryError) {
+                throw IllegalStateException("out of memory during key derivation")
+            }
             return keyBytes
         } finally {
             Arrays.fill(passBytes, 0)

@@ -359,6 +359,9 @@ class SecureInputMethodService : InputMethodService() {
     // see clearSecureCompose() and every call site of it.
     private val composeBuffer = StringBuilder()
     private var composePreviewView: TextView? = null
+    private var composePreviewScroll: ScrollView? = null
+    private var lastComposeDeleteMs = 0L
+    private var composeDeleteBurst = 0
     // Holds decrypted plaintext ONLY while the crypto panel is actively
     // displaying it for the user to read - never written anywhere, and
     // cleared (see clearCryptoResult()) the moment the panel closes or a
@@ -623,6 +626,7 @@ class SecureInputMethodService : InputMethodService() {
         // to avoid.
         composeBuffer.setLength(0)
         composePreviewView = null
+        composePreviewScroll = null
         showingSecureCompose = false
         secureComposeSticky = false
         // Any decrypted result being shown inline on this same screen
@@ -630,6 +634,21 @@ class SecureInputMethodService : InputMethodService() {
         // leave it sitting in memory once the user has explicitly left
         // secure mode via "رجوع".
         cryptoDecryptedText = null
+    }
+
+    /** V64: shows the buffer with a visible caret at the end (where typing/deleting happens) and keeps the
+     * box scrolled to the end, so pasted or long text is always visible below what was there before. */
+    private fun updateComposePreview() {
+        val v = composePreviewView ?: return
+        val sb = android.text.SpannableStringBuilder(composeBuffer.toString())
+        val start = sb.length
+        sb.append('|')
+        sb.setSpan(
+            android.text.style.ForegroundColorSpan(ThemeUtil.accentColor(this)),
+            start, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        v.text = sb
+        composePreviewScroll?.post { composePreviewScroll?.fullScroll(View.FOCUS_DOWN) }
     }
 
     /**
@@ -657,7 +676,7 @@ class SecureInputMethodService : InputMethodService() {
             return
         }
         composeBuffer.append(clipText)
-        composePreviewView?.text = composeBuffer.toString()
+        updateComposePreview()
         try {
             cm?.setPrimaryClip(android.content.ClipData.newPlainText("", ""))
         } catch (_: Exception) {
@@ -1251,8 +1270,9 @@ class SecureInputMethodService : InputMethodService() {
             setPadding(dpToPx(8f), dpToPx(6f), dpToPx(8f), dpToPx(6f))
             layoutDirection = View.LAYOUT_DIRECTION_RTL
             textDirection = View.TEXT_DIRECTION_RTL
+            // V64: no maxLines cap (it hid everything after line 3, so pasted/long text never showed);
+            // the box scrolls and is kept scrolled to the end, see updateComposePreview().
             minLines = 2
-            maxLines = 3
             text = composeBuffer.toString()
         }
         composePreviewView = preview
@@ -1307,6 +1327,8 @@ class SecureInputMethodService : InputMethodService() {
             addView(box)
         }
         root.addView(previewScroll)
+        composePreviewScroll = previewScroll
+        updateComposePreview()
 
         // Encrypt/decrypt actions live right above the keys, always
         // visible and always reachable without leaving this screen.
@@ -1372,11 +1394,11 @@ class SecureInputMethodService : InputMethodService() {
                     variants = variants,
                     onVariantChosen = { picked ->
                         composeBuffer.append(picked)
-                        composePreviewView?.text = composeBuffer.toString()
+                        updateComposePreview()
                     }
                 ) {
                     composeBuffer.append(ch)
-                    composePreviewView?.text = composeBuffer.toString()
+                    updateComposePreview()
                 })
             }
             root.addView(rowLayout)
@@ -1393,11 +1415,22 @@ class SecureInputMethodService : InputMethodService() {
         })
         bottomRow.addView(makeKey("مسافة", weight = 3f, heightDp = heightDp, accented = true) {
             composeBuffer.append(' ')
-            composePreviewView?.text = composeBuffer.toString()
+            updateComposePreview()
         })
         bottomRow.addView(makeKey(BACKSPACE_GLYPH, weight = 1.3f, heightDp = heightDp, accented = true, repeatable = true, a11yLabel = "حذف", isIconGlyph = true) {
-            if (composeBuffer.isNotEmpty()) composeBuffer.deleteCharAt(composeBuffer.length - 1)
-            composePreviewView?.text = composeBuffer.toString()
+            // V64: hold-to-delete speeds up the longer it is held (1 -> 2 -> 4 characters per tick).
+            val now = android.os.SystemClock.uptimeMillis()
+            composeDeleteBurst = if (now - lastComposeDeleteMs < 150L) composeDeleteBurst + 1 else 0
+            lastComposeDeleteMs = now
+            val n = when {
+                composeDeleteBurst > 18 -> 4
+                composeDeleteBurst > 8 -> 2
+                else -> 1
+            }
+            repeat(n) {
+                if (composeBuffer.isNotEmpty()) composeBuffer.deleteCharAt(composeBuffer.length - 1)
+            }
+            updateComposePreview()
         })
         root.addView(bottomRow)
     }
@@ -2588,6 +2621,8 @@ class SecureInputMethodService : InputMethodService() {
                 showingSecureCompose = true
                 showingCrypto = false
                 composePreviewView = null
+                composePreviewScroll = null
+        composePreviewScroll = null
             }
             cryptoMenuSticky -> {
                 showingCrypto = true

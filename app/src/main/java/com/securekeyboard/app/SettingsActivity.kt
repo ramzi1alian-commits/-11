@@ -127,6 +127,10 @@ class SettingsActivity : SkActivity() {
             Prefs.setAutocorrectEnabled(this, checked)
         }
 
+        val incognitoSwitch = findViewById<SwitchMaterial>(R.id.switchIncognito)
+        incognitoSwitch.isChecked = Prefs.incognitoMode(this)
+        incognitoSwitch.setOnCheckedChangeListener { _, checked -> Prefs.setIncognitoMode(this, checked) }
+
         val clipSwitch = findViewById<SwitchMaterial>(R.id.switchClipboardHistory)
         clipSwitch.isChecked = Prefs.clipboardHistoryEnabled(this)
         clipSwitch.setOnCheckedChangeListener { _, checked ->

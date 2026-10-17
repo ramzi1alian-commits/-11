@@ -54,6 +54,7 @@ object ClipboardHistory {
 
     fun add(context: Context, raw: String): Boolean {
         if (System.currentTimeMillis() < ignoreUntil) return false
+        if (Prefs.incognitoMode(context)) return false // V65
         val text = raw.trim()
         if (text.isEmpty() || text.length > MAX_ITEM_CHARS) return false
         if (text.startsWith("SKF") || text.startsWith("SKFT1:")) return false

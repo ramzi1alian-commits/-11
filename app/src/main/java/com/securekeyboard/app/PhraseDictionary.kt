@@ -36,6 +36,7 @@ object PhraseDictionary {
 
     fun learn(context: Context, line: String) {
         if (!Prefs.phraseLearningEnabled(context)) return // V60: user switched phrase learning off
+        if (Prefs.incognitoMode(context)) return // V65
         val phrase = line.trim()
         if (phrase.isEmpty() || phrase.length > MAX_PHRASE_LENGTH) return
         var words = 0

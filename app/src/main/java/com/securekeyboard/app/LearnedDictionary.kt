@@ -35,6 +35,7 @@ object LearnedDictionary {
 
     fun learn(context: Context, word: String) {
         if (word.length < 2) return
+        if (Prefs.incognitoMode(context)) return // V65
         counts.merge(word, 1) { old, inc -> (old + inc).coerceAtMost(Int.MAX_VALUE) }
         persist(context.applicationContext)
     }

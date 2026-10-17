@@ -97,7 +97,7 @@ object SessionKeyStore {
     fun set(chars: CharArray, durationMs: Long = DEFAULT_DURATION_MS) {
         require(chars.isNotEmpty()) { "passphrase is empty" }
         val safeDuration = durationMs.coerceIn(1L, MAX_DURATION_MS)
-        clear()
+        wipe()
         passphrase = chars.copyOf()
         expiresAtElapsedMs = SystemClock.elapsedRealtime() + safeDuration
         expiresAtWallMs = System.currentTimeMillis() + safeDuration
@@ -177,9 +177,16 @@ object SessionKeyStore {
         return ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L)
     }
 
-    /** Wipes memory, deletes the stored blob and DELETES the Keystore key: nothing is left to recover. */
+    /** Session ended (expiry / explicit clear): wipe the key AND the decrypted-message cache tied to it (V65). */
     @Synchronized
     fun clear() {
+        wipe()
+        try { appContext?.let { DecryptedMessageCache.clear(it) } } catch (_: Throwable) {}
+    }
+
+    /** Wipes memory, deletes the stored blob and DELETES the Keystore key: nothing is left to recover. */
+    @Synchronized
+    private fun wipe() {
         handler.removeCallbacks(expireRunnable)
         passphrase?.let { SecureMemory.wipe(it) }
         passphrase = null

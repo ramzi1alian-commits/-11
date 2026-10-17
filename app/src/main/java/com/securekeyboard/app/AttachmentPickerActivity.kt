@@ -209,7 +209,7 @@ object AttachmentStore {
 
     fun purgeOld(c: Context) {
         val now = System.currentTimeMillis()
-        dir(c).listFiles()?.forEach { if (now - it.lastModified() > MAX_AGE_MS) it.delete() }
+        dir(c).listFiles()?.forEach { if (now - it.lastModified() > MAX_AGE_MS) secureDelete(it) }
     }
 
     /** Streams [uri] into the private dir. Returns null when it cannot be read. */
@@ -234,6 +234,26 @@ object AttachmentStore {
     }
 
     fun deleteIfOwnCopy(c: Context, uri: Uri?) {
-        if (isOwnCopy(c, uri)) try { File(uri!!.path!!).delete() } catch (_: Exception) {}
+        if (isOwnCopy(c, uri)) secureDelete(File(uri!!.path!!))
+    }
+
+    /** V65: overwrite with zeros before deleting (best effort - flash storage may still keep old blocks). */
+    fun secureDelete(f: File) {
+        try {
+            if (f.isFile) {
+                java.io.RandomAccessFile(f, "rw").use { raf ->
+                    val zeros = ByteArray(64 * 1024)
+                    var left = raf.length()
+                    raf.seek(0)
+                    while (left > 0) {
+                        val n = minOf(left, zeros.size.toLong()).toInt()
+                        raf.write(zeros, 0, n)
+                        left -= n
+                    }
+                    raf.fd.sync()
+                }
+            }
+        } catch (_: Throwable) {}
+        try { f.delete() } catch (_: Throwable) {}
     }
 }

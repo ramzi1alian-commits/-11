@@ -20,6 +20,7 @@ object Prefs {
     private const val KEY_AUTOCORRECT = "autocorrect_enabled"
     private const val KEY_PHRASE_LEARNING = "phrase_learning_enabled"
     private const val KEY_CLIPBOARD_HISTORY = "clipboard_history_enabled"
+    private const val KEY_INCOGNITO = "incognito_mode"
     private const val KEY_FIPS_MODE = "fips_compatible_mode"
     private const val KEY_RETURN_TO_CRYPTO = "return_to_crypto"
     private const val KEY_RETURN_TO_SECURE_COMPOSE = "return_to_secure_compose"
@@ -156,6 +157,13 @@ object Prefs {
     // V60: ON by default (keeps the existing behaviour). OFF = no new phrases are saved and the saved
     // ones are not suggested; nothing is deleted (the separate clear button does that).
     fun phraseLearningEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_PHRASE_LEARNING, true)
+
+    // V65: incognito = nothing new is learned or saved (words, sentences, clipboard history). OFF by default.
+    fun incognitoMode(context: Context): Boolean = prefs(context).getBoolean(KEY_INCOGNITO, false)
+
+    fun setIncognitoMode(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_INCOGNITO, enabled).apply()
+    }
 
     // V63: OFF by default - a permanent clipboard history is real storage of what the user copies.
     fun clipboardHistoryEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_CLIPBOARD_HISTORY, false)
